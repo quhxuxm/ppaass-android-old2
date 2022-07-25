@@ -37,16 +37,15 @@ public class IpStackObserver implements IFlowObserver<IpPacket> {
                         break;
                     }
                     default: {
-                        Log.e(IpStackObserver.class.getName(), "Unsupported protocol");
-//                        throw new UnsupportedOperationException("Unsupported protocol.");
+                        Log.e(IpStackObserver.class.getName(),
+                                "Ignore unsupported protocol: " + ipV4Header.getProtocol());
                         break;
                     }
                 }
                 break;
             }
             case V6: {
-//                throw new UnsupportedOperationException("IpV6 still not support.");
-                Log.e(IpStackObserver.class.getName(), "IpV6 still not support");
+                Log.e(IpStackObserver.class.getName(), "Ignore IpV6 packet because of not support");
                 break;
             }
             default: {
