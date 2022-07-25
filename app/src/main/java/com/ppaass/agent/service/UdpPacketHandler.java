@@ -4,11 +4,12 @@ import android.util.Log;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
 
 import java.io.FileOutputStream;
+import java.io.OutputStream;
 
 public class UdpPacketHandler {
-    private final FileOutputStream rawVpnOutputStream;
+    private final OutputStream rawVpnOutputStream;
 
-    public UdpPacketHandler(FileOutputStream rawVpnOutputStream) {
+    public UdpPacketHandler(OutputStream rawVpnOutputStream) {
         this.rawVpnOutputStream = rawVpnOutputStream;
     }
 

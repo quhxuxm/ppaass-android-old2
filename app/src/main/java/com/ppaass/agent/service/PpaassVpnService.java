@@ -3,6 +3,7 @@ package com.ppaass.agent.service;
 import android.app.Service;
 import android.content.Intent;
 import android.net.VpnService;
+import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 import com.ppaass.agent.R;
@@ -11,6 +12,8 @@ import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class PpaassVpnService extends VpnService {
     private static final String VPN_ADDRESS = "110.110.110.110";
@@ -18,7 +21,8 @@ public class PpaassVpnService extends VpnService {
     private static final String DNS = "8.8.8.8";
     private String id;
     private ParcelFileDescriptor vpnInterface;
-    private IpStackObservable ipStackObservable;
+    private IpPacketProcessor ipPacketProcessor;
+    private ExecutorService vpnThreadPool;
 
     public PpaassVpnService() {
     }
@@ -40,14 +44,19 @@ public class PpaassVpnService extends VpnService {
         final FileDescriptor vpnFileDescriptor = vpnInterface.getFileDescriptor();
         FileInputStream rawIpInputStream = new FileInputStream(vpnFileDescriptor);
         FileOutputStream rawIpOutputStream = new FileOutputStream(vpnFileDescriptor);
-        this.ipStackObservable = new IpStackObservable(rawIpInputStream, 65536);
-        this.ipStackObservable.registerObserver(new IpStackObserver(rawIpOutputStream));
+        this.vpnThreadPool = Executors.newFixedThreadPool(128);
+        this.ipPacketProcessor = new IpPacketProcessor(rawIpInputStream, rawIpOutputStream, 65536, 65536);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         super.onStartCommand(intent, flags, startId);
-        this.ipStackObservable.start();
+        if (this.ipPacketProcessor.isRunning()) {
+            Log.i(PpaassVpnService.class.getName(), "onStartCommand(start already): " + this.id);
+            return Service.START_STICKY;
+        }
+        this.ipPacketProcessor.start();
+        this.vpnThreadPool.execute(this.ipPacketProcessor);
         Log.i(PpaassVpnService.class.getName(), "onStartCommand: " + this.id);
         return Service.START_STICKY;
     }
@@ -56,6 +65,7 @@ public class PpaassVpnService extends VpnService {
     public void onRevoke() {
         super.onRevoke();
         Log.i(PpaassVpnService.class.getName(), "onRevoke: " + this.id);
+        this.ipPacketProcessor.stop();
         try {
             this.vpnInterface.close();
         } catch (Exception e) {
@@ -66,6 +76,12 @@ public class PpaassVpnService extends VpnService {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        this.ipPacketProcessor.stop();
         Log.i(PpaassVpnService.class.getName(), "onDestroy: " + this.id);
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return super.onBind(intent);
     }
 }
