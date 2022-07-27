@@ -16,7 +16,7 @@ import java.util.UUID;
 public class PpaassVpnService extends VpnService {
     private static final String VPN_ADDRESS = "110.110.110.110";
     private static final String VPN_ROUTE = "0.0.0.0";
-    private static final String DNS = "8.8.8.8";
+    private static final String DNS = "192.168.31.1";
     private String id;
     private ParcelFileDescriptor vpnInterface;
     private FileInputStream rawDeviceInputStream;

@@ -29,17 +29,21 @@ public class IpV4UdpPacketHandler {
         try {
             InetAddress destinationAddress = InetAddress.getByAddress(ipV4Header.getDestinationAddress());
             int destinationPort = udpPacket.getHeader().getDestinationPort();
-            Log.d(IpV4UdpPacketHandler.class.getName(), "Begin to send udp packet to remote: " + udpPacket);
-            DatagramChannel udpChannel = DatagramChannel.open();
-            udpChannel.socket().bind(null);
-            udpChannel.connect(new InetSocketAddress(destinationAddress, destinationPort));
-            udpChannel.configureBlocking(false);
-            this.vpnService.protect(udpChannel.socket());
-            udpChannel.write(ByteBuffer.wrap(udpPacket.getData()));
+            InetSocketAddress deviceToRemoteDestinationAddress =
+                    new InetSocketAddress(destinationAddress, destinationPort);
+            DatagramChannel deviceToRemoteUdpChannel = DatagramChannel.open();
+            this.vpnService.protect(deviceToRemoteUdpChannel.socket());
+            deviceToRemoteUdpChannel.configureBlocking(false);
+            deviceToRemoteUdpChannel.connect(deviceToRemoteDestinationAddress);
+            Log.d(IpV4UdpPacketHandler.class.getName(),
+                    "Begin to send udp packet to remote: " + udpPacket + ", destination: " +
+                            deviceToRemoteDestinationAddress);
+            Log.d(IpV4UdpPacketHandler.class.getName(), "Udp data: \n\n" + new String(udpPacket.getData()) + "\n\n");
+            deviceToRemoteUdpChannel.write(ByteBuffer.wrap(udpPacket.getData()));
             ByteBuffer packetFromRemoteToDeviceBuffer = ByteBuffer.allocate(65535);
-            int packetFromRemoteToDeviceBufferLength = udpChannel.read(packetFromRemoteToDeviceBuffer);
-            udpChannel.disconnect();
-            udpChannel.close();
+            int packetFromRemoteToDeviceBufferLength =
+                    deviceToRemoteUdpChannel.read(packetFromRemoteToDeviceBuffer);
+            deviceToRemoteUdpChannel.disconnect();
             UdpPacketBuilder remoteToDeviceUdpPacketBuilder = new UdpPacketBuilder();
             byte[] packetFromRemoteToDeviceBytes = new byte[packetFromRemoteToDeviceBufferLength];
             packetFromRemoteToDeviceBuffer.get(packetFromRemoteToDeviceBytes);
@@ -49,6 +53,8 @@ public class IpV4UdpPacketHandler {
             UdpPacket remoteToDeviceUdpPacket = remoteToDeviceUdpPacketBuilder.build();
             Log.d(IpV4UdpPacketHandler.class.getName(),
                     "Success receive remote udp packet: " + remoteToDeviceUdpPacket);
+            Log.d(IpV4UdpPacketHandler.class.getName(),
+                    "Udp data: \n\n" + new String(packetFromRemoteToDeviceBytes) + "\n\n");
             IpPacketBuilder ipPacketBuilder = new IpPacketBuilder();
             ipPacketBuilder.data(remoteToDeviceUdpPacket);
             IpV4HeaderBuilder ipV4HeaderBuilder = new IpV4HeaderBuilder();
