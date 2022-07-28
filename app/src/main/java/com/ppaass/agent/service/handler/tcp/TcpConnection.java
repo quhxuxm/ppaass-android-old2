@@ -50,11 +50,18 @@ public class TcpConnection implements Runnable {
         this.remoteRelayToDeviceJob = new Runnable() {
             @Override
             public void run() {
-                while (TcpConnection.this.status.get() == TcpConnectionStatus.LISTEN ||
-                        TcpConnection.this.status.get() == TcpConnectionStatus.SYNC_RCVD ||
+                try {
+                    TcpConnection.this.establishLatch.await();
+                } catch (InterruptedException e) {
+                    Log.e(TcpConnection.class.getName(),
+                            "Connection can not relay remote data because of exception, connection:  " + this, e);
+                    TcpConnection.this.status.set(TcpConnectionStatus.CLOSED);
+                    TcpConnection.this.connectionRepository.remove(TcpConnection.this.repositoryKey);
+                    return;
+                }
+                while (
                         TcpConnection.this.status.get() == TcpConnectionStatus.ESTABLISHED) {
                     try {
-                        TcpConnection.this.establishLatch.await();
                         Log.d(TcpConnection.class.getName(),
                                 "Receive remote data write ack to device [begin], current connection: " +
                                         TcpConnection.this);
