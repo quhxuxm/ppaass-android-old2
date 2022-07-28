@@ -9,7 +9,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 
-public class Test {
+public class DnsTest {
     public static void main(String[] args) throws IOException, DecoderException {
         InetAddress destinationAddress = InetAddress.getAllByName("10.246.128.21")[0];
 //        InetAddress destinationAddress = InetAddress.getAllByName("8.8.8.8")[0];
