@@ -30,8 +30,6 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
     }
 
     public void handle(TcpPacket tcpPacket, IpV4Header ipV4Header) throws Exception {
-        Log.d(IpV4TcpPacketHandler.class.getName(),
-                "Receive tcp packet: " + tcpPacket.toString() + ", ip header: " + ipV4Header);
         TcpHeader tcpHeader = tcpPacket.getHeader();
         int sourcePort = tcpHeader.getSourcePort();
         int destinationPort = tcpHeader.getDestinationPort();
@@ -40,11 +38,11 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         TcpConnectionRepositoryKey tcpConnectionRepositoryKey =
                 new TcpConnectionRepositoryKey(sourcePort, destinationPort, sourceAddress, destinationAddress);
         TcpConnection tcpConnection = this.connectionRepository.computeIfAbsent(tcpConnectionRepositoryKey, key -> {
-            Log.d(IpV4TcpPacketHandler.class.getName(),
-                    "Create tcp connection with key:" + key + ", incoming tcp packet: " + tcpPacket + ", ip header: " +
-                            ipV4Header);
             TcpConnection result = new TcpConnection(key, this, connectionRepository);
             this.vpnService.protect(result.getRemoteSocket());
+            Log.d(IpV4TcpPacketHandler.class.getName(),
+                    "Create tcp connection: " + result + ", incoming tcp packet: " + tcpPacket + ", ip header: " +
+                            ipV4Header);
             this.connectionThreadPool.execute(result);
             return result;
         });

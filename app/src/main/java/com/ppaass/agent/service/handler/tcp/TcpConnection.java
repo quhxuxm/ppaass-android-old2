@@ -11,12 +11,14 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -27,7 +29,6 @@ public class TcpConnection implements Runnable {
     private final Socket remoteSocket;
     private final TcpIpPacketWriter tcpIpPacketWriter;
     private final BlockingQueue<TcpPacket> deviceInbound;
-    private final BlockingQueue<byte[]> remoteInbound;
     private final Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository;
     private final AtomicReference<TcpConnectionStatus> status;
     private final AtomicLong currentSequenceNumber;
@@ -45,19 +46,24 @@ public class TcpConnection implements Runnable {
         this.clientSyncSequenceNumber = new AtomicLong(0);
         this.remoteSocket = new Socket();
         this.deviceInbound = new LinkedBlockingQueue<>();
-        this.remoteInbound = new LinkedBlockingQueue<>();
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.connectionRepository = connectionRepository;
         this.remoteRelayToDeviceJob = new Runnable() {
             @Override
             public void run() {
-                while (TcpConnection.this.status.get() != TcpConnectionStatus.CLOSED) {
+                while (TcpConnection.this.status.get() == TcpConnectionStatus.LISTEN ||
+                        TcpConnection.this.status.get() == TcpConnectionStatus.SYNC_RCVD ||
+                        TcpConnection.this.status.get() == TcpConnectionStatus.ESTABLISHED) {
                     try {
                         Log.d(TcpConnection.class.getName(),
                                 "Receive remote data write ack to device [begin], current connection: " + this);
-                        byte[] remoteInboundData = TcpConnection.this.remoteInbound.take();
-                        TcpConnection.this.currentSequenceNumber.addAndGet(remoteInboundData.length);
-                        TcpConnection.this.writeAck(remoteInboundData);
+                        byte[] remoteDataBuf = new byte[65536];
+                        byte[] remoteData = TcpConnection.this.readFromRemote(remoteDataBuf);
+                        if (remoteData == null) {
+                            return;
+                        }
+                        TcpConnection.this.currentSequenceNumber.addAndGet(remoteData.length);
+                        TcpConnection.this.writeAck(remoteData);
                         Log.d(TcpConnection.class.getName(),
                                 "Receive remote data write ack to device [end], current connection: " + this);
                     } catch (Exception e) {
@@ -101,6 +107,18 @@ public class TcpConnection implements Runnable {
         this.tcpIpPacketWriter.write(this.repositoryKey, ackTcpPacket);
     }
 
+    private void writeFinAck() throws Exception {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.fin(true);
+        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
+        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
+        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
+        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
+        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        this.tcpIpPacketWriter.write(this.repositoryKey, ackTcpPacket);
+    }
+
     public Socket getRemoteSocket() {
         return remoteSocket;
     }
@@ -118,7 +136,13 @@ public class TcpConnection implements Runnable {
     public void run() {
         while (this.status.get() != TcpConnectionStatus.CLOSED) {
             try {
-                TcpPacket tcpPacket = this.deviceInbound.take();
+                TcpPacket tcpPacket = this.deviceInbound.poll(20, TimeUnit.SECONDS);
+                if (tcpPacket == null) {
+                    this.status.set(TcpConnectionStatus.CLOSED);
+                    this.connectionRepository.remove(this.repositoryKey);
+                    Log.d(TcpConnection.class.getName(), "Timeout, current connection: " + this);
+                    return;
+                }
                 TcpHeader tcpHeader = tcpPacket.getHeader();
                 if (tcpHeader.isSyn()) {
                     if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
@@ -135,7 +159,7 @@ public class TcpConnection implements Runnable {
                     Log.d(TcpConnection.class.getName(), "Receive sync [end], current connection: " + this);
                     continue;
                 }
-                if (tcpHeader.isAck()) {
+                if (tcpHeader.isAck() && !tcpHeader.isFin()) {
                     Log.d(TcpConnection.class.getName(),
                             "Receive ack [begin], current connection: " + this + ", client tcp packet: " + tcpPacket);
                     if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
@@ -165,7 +189,8 @@ public class TcpConnection implements Runnable {
                         continue;
                     }
                     if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
-                        Log.d(TcpConnection.class.getName(), "Device write to remote:  " + this);
+                        Log.d(TcpConnection.class.getName(),
+                                "Device write to remote:  " + this + ", data:\n\n" + new String(tcpPacket.getData()));
                         int dataLength = tcpPacket.getData().length;
                         this.writeToRemote(tcpPacket.getData());
                         this.currentAcknowledgementNumber.addAndGet(dataLength);
@@ -175,6 +200,24 @@ public class TcpConnection implements Runnable {
                                 "Receive ack [end.4], data write to remote, current connection: " + this);
                         continue;
                     }
+                    if (this.status.get() == TcpConnectionStatus.LAST_ACK) {
+                        this.status.set(TcpConnectionStatus.CLOSED);
+                        this.connectionRepository.remove(this.repositoryKey);
+                        Log.d(TcpConnection.class.getName(),
+                                "Receive last ack, close connection: " + this);
+                        return;
+                    }
+                }
+                if (tcpHeader.isFin()) {
+                    this.status.set(TcpConnectionStatus.CLOSE_WAIT);
+                    this.connectionRepository.remove(this.repositoryKey);
+                    this.currentAcknowledgementNumber.incrementAndGet();
+                    this.writeAck(null);
+                    this.status.set(TcpConnectionStatus.LAST_ACK);
+                    this.writeFinAck();
+                    Log.d(TcpConnection.class.getName(),
+                            "Receive fin, begin to close connection: " + this);
+                    continue;
                 }
             } catch (Exception e) {
                 this.status.set(TcpConnectionStatus.CLOSED);
@@ -191,9 +234,13 @@ public class TcpConnection implements Runnable {
         remoteStream.flush();
     }
 
-    private int readFromRemote(byte[] data) throws Exception {
+    private byte[] readFromRemote(byte[] data) throws Exception {
         InputStream remoteStream = this.remoteSocket.getInputStream();
-        return remoteStream.read(data);
+        int remoteDataLength = remoteStream.read(data);
+        if (remoteDataLength < 0) {
+            return null;
+        }
+        return Arrays.copyOf(data, remoteDataLength);
     }
 
     public void close() throws Exception {

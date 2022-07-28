@@ -34,7 +34,7 @@ public class IpV4UdpPacketHandler {
         this.udpThreadPool.execute(new Runnable() {
             @Override
             public void run() {
-                try {
+                try (DatagramSocket deviceToRemoteUdpSocket = new DatagramSocket()) {
                     Log.d(IpV4UdpPacketHandler.class.getName(), udpPacket.toString());
 //            InetAddress destinationAddress = InetAddress.getByName("10.246.128.21");
                     InetAddress destinationAddress = InetAddress.getByAddress(ipV4Header.getDestinationAddress());
@@ -42,7 +42,6 @@ public class IpV4UdpPacketHandler {
 //            int destinationPort = 53;
                     InetSocketAddress deviceToRemoteDestinationAddress =
                             new InetSocketAddress(destinationAddress, destinationPort);
-                    DatagramSocket deviceToRemoteUdpSocket = new DatagramSocket();
                     deviceToRemoteUdpSocket.setSoTimeout(20000);
                     IpV4UdpPacketHandler.this.vpnService.protect(deviceToRemoteUdpSocket);
                     DatagramPacket deviceToRemoteUdpPacket =

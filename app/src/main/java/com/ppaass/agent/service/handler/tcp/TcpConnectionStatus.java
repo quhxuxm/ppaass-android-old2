@@ -4,5 +4,7 @@ public enum TcpConnectionStatus {
     CLOSED,
     LISTEN,
     SYNC_RCVD,
-    ESTABLISHED
+    ESTABLISHED,
+    CLOSE_WAIT,
+    LAST_ACK
 }
