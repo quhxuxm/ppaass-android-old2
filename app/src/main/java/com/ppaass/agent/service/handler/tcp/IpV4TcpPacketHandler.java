@@ -9,8 +9,8 @@ import com.ppaass.agent.service.handler.TcpIpPacketWriter;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -25,12 +25,13 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.writeBufferSize = writeBufferSize;
         this.vpnService = vpnService;
-        this.connectionRepository = new HashMap<>();
+        this.connectionRepository = new ConcurrentHashMap<>();
         this.connectionThreadPool = Executors.newFixedThreadPool(128);
     }
 
     public void handle(TcpPacket tcpPacket, IpV4Header ipV4Header) throws Exception {
-        Log.d(IpV4TcpPacketHandler.class.getName(), tcpPacket.toString());
+        Log.d(IpV4TcpPacketHandler.class.getName(),
+                "Receive tcp packet: " + tcpPacket.toString() + ", ip header: " + ipV4Header);
         TcpHeader tcpHeader = tcpPacket.getHeader();
         int sourcePort = tcpHeader.getSourcePort();
         int destinationPort = tcpHeader.getDestinationPort();
@@ -39,6 +40,9 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         TcpConnectionRepositoryKey tcpConnectionRepositoryKey =
                 new TcpConnectionRepositoryKey(sourcePort, destinationPort, sourceAddress, destinationAddress);
         TcpConnection tcpConnection = this.connectionRepository.computeIfAbsent(tcpConnectionRepositoryKey, key -> {
+            Log.d(IpV4TcpPacketHandler.class.getName(),
+                    "Create tcp connection with key:" + key + ", incoming tcp packet: " + tcpPacket + ", ip header: " +
+                            ipV4Header);
             TcpConnection result = new TcpConnection(key, this, connectionRepository);
             this.vpnService.protect(result.getRemoteSocket());
             this.connectionThreadPool.execute(result);
@@ -63,5 +67,6 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         IpPacket ipPacket = ipPacketBuilder.build();
         byte[] ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
         this.rawDeviceOutputStream.write(ipPacketBytes);
+        this.rawDeviceOutputStream.flush();
     }
 }

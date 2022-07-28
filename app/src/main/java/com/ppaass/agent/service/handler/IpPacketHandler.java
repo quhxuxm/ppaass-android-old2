@@ -39,7 +39,9 @@ public class IpPacketHandler {
                     try {
                         IpPacket ipPacket = IpPacketHandler.this.read();
                         if (ipPacket == null) {
-                            Thread.sleep(50);
+                            synchronized (this){
+                                this.wait(500);
+                            }
                             continue;
                         }
                         IpPacketHandler.this.handle(ipPacket);
@@ -69,15 +71,15 @@ public class IpPacketHandler {
                         break;
                     }
                     default: {
-                        Log.e(IpPacketHandler.class.getName(),
-                                "Ignore unsupported protocol: " + ipV4Header.getProtocol());
+//                        Log.e(IpPacketHandler.class.getName(),
+//                                "Ignore unsupported protocol: " + ipV4Header.getProtocol());
                         break;
                     }
                 }
                 break;
             }
             case V6: {
-                Log.e(IpPacketHandler.class.getName(), "Ignore IpV6 packet because of not support");
+//                Log.e(IpPacketHandler.class.getName(), "Ignore IpV6 packet because of not support");
                 break;
             }
             default: {
@@ -90,9 +92,9 @@ public class IpPacketHandler {
         byte[] buffer = new byte[this.readBufferSize];
         try {
             int size = this.rawDeviceInputStream.read(buffer);
-            if (size <= 0) {
-                Log.d(IpPacketHandler.class.getName(),
-                        "Nothing to read from raw input stream because of read size: " + size);
+            if (size < 0) {
+//                Log.d(IpPacketHandler.class.getName(),
+//                        "Nothing to read from raw input stream because of read size: " + size);
                 return null;
             }
             return IpPacketReader.INSTANCE.parse(buffer);
