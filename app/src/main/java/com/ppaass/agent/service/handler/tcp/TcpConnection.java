@@ -62,18 +62,16 @@ public class TcpConnection implements Runnable {
                 while (
                         TcpConnection.this.status.get() == TcpConnectionStatus.ESTABLISHED) {
                     try {
-                        Log.d(TcpConnection.class.getName(),
-                                "Receive remote data write ack to device [begin], current connection: " +
-                                        TcpConnection.this);
                         byte[] remoteDataBuf = new byte[65536];
                         byte[] remoteData = TcpConnection.this.readFromRemote(remoteDataBuf);
                         if (remoteData == null) {
                             return;
                         }
                         TcpConnection.this.currentSequenceNumber.addAndGet(remoteData.length);
-                        TcpConnection.this.writeAck(remoteData);
                         Log.d(TcpConnection.class.getName(),
-                                "Receive remote data write ack to device [end], current connection: " + this);
+                                "Receive remote data write ack to device, current connection: " +
+                                        TcpConnection.this + ", remote data size: " + remoteData.length);
+                        TcpConnection.this.writeAck(remoteData);
                     } catch (Exception e) {
                         Log.e(TcpConnection.class.getName(),
                                 "Fail to relay device data to remote because of exception.", e);
@@ -148,7 +146,7 @@ public class TcpConnection implements Runnable {
                 if (tcpPacket == null) {
                     this.status.set(TcpConnectionStatus.CLOSED);
                     this.connectionRepository.remove(this.repositoryKey);
-                    Log.d(TcpConnection.class.getName(), "Timeout, current connection: " + this);
+                    Log.d(TcpConnection.class.getName(), "Read tcp packet timeout, current connection: " + this);
                     return;
                 }
                 TcpHeader tcpHeader = tcpPacket.getHeader();
@@ -156,66 +154,60 @@ public class TcpConnection implements Runnable {
                     if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
                         continue;
                     }
-                    Log.d(TcpConnection.class.getName(),
-                            "Receive sync [begin], current connection: " + this + ", client tcp packet: " + tcpPacket);
                     //Initialize ack number and seq number
                     this.currentAcknowledgementNumber.set(tcpHeader.getSequenceNumber() + 1);
                     this.currentSequenceNumber.set(this.generateRandomNumber());
                     this.clientSyncSequenceNumber.set(tcpHeader.getSequenceNumber());
                     this.status.set(TcpConnectionStatus.SYNC_RCVD);
                     this.writeSyncAck();
-                    Log.d(TcpConnection.class.getName(), "Receive sync [end], current connection: " + this);
+                    this.currentSequenceNumber.incrementAndGet();
+                    Log.d(TcpConnection.class.getName(),
+                            "Receive sync and do sync ack, current connection: " + this + ", incoming tcp packet: " + tcpPacket);
                     continue;
                 }
                 if (tcpHeader.isAck() && !tcpHeader.isFin()) {
-                    Log.d(TcpConnection.class.getName(),
-                            "Receive ack [begin], current connection: " + this + ", client tcp packet: " + tcpPacket);
                     if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
-                        if (this.currentSequenceNumber.get() + 1 != tcpHeader.getAcknowledgementNumber()) {
-                            Log.e(TcpConnection.class.getName(),
-                                    "Connection current seq number do not match incoming ack number:  " + this);
+                        if (this.currentSequenceNumber.get() != tcpHeader.getAcknowledgementNumber()) {
                             this.status.set(TcpConnectionStatus.CLOSED);
                             this.connectionRepository.remove(this.repositoryKey);
-                            Log.d(TcpConnection.class.getName(), "Receive ack [end.1], current connection: " + this);
-                            return;
-                        }
-                        if (this.clientSyncSequenceNumber.get() + 1 != tcpHeader.getSequenceNumber()) {
                             Log.e(TcpConnection.class.getName(),
-                                    "Connection current seq number do not match syn seq +1:  " + this);
-                            this.status.set(TcpConnectionStatus.CLOSED);
-                            this.connectionRepository.remove(this.repositoryKey);
-                            Log.d(TcpConnection.class.getName(), "Receive ack [end.2], current connection: " + this);
+                                    "Connection current seq number do not match incoming ack number:  " + this +
+                                            ", incoming tcp packet: " + tcpPacket);
                             return;
                         }
-                        Log.d(TcpConnection.class.getName(), "Begin connect to remote: " + this);
                         this.connectRemote();
-                        Executors.newSingleThreadExecutor().execute(this.remoteRelayToDeviceJob);
                         this.status.set(TcpConnectionStatus.ESTABLISHED);
-                        this.currentSequenceNumber.set(tcpHeader.getAcknowledgementNumber());
+                        Executors.newSingleThreadExecutor().execute(this.remoteRelayToDeviceJob);
                         this.establishLatch.countDown();
                         Log.d(TcpConnection.class.getName(),
-                                "Receive ack [end.3], remote connection established, current connection: " + this);
+                                "Receive ack and remote connection established, current connection: " + this +
+                                        ", incoming tcp packet: " + tcpPacket);
                         continue;
                     }
                     if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
-                        Log.d(TcpConnection.class.getName(),
-                                "Device write to remote:  " + this + ", data:\n\n" + new String(tcpPacket.getData()));
                         int dataLength = tcpPacket.getData().length;
                         this.writeToRemote(tcpPacket.getData());
                         this.currentAcknowledgementNumber.addAndGet(dataLength);
-                        this.currentSequenceNumber.set(tcpHeader.getAcknowledgementNumber());
                         this.writeAck(null);
                         Log.d(TcpConnection.class.getName(),
-                                "Receive ack [end.4], data write to remote, current connection: " + this);
+                                "Receive ack and write device data to remote, current connection:  " + this +
+                                        ", incoming tcp packet: " + tcpPacket + " , device data size: " +
+                                        tcpPacket.getData().length);
                         continue;
                     }
                     if (this.status.get() == TcpConnectionStatus.LAST_ACK) {
                         this.status.set(TcpConnectionStatus.CLOSED);
                         this.connectionRepository.remove(this.repositoryKey);
                         Log.d(TcpConnection.class.getName(),
-                                "Receive last ack, close connection: " + this);
+                                "Receive last ack, close connection: " + this + ", incoming tcp packet: " + tcpPacket);
                         return;
                     }
+                    Log.e(TcpConnection.class.getName(),
+                            "Incorrect connection status going to close connection, current connection: " + this +
+                                    ", incoming tcp packet: " + tcpPacket);
+                    this.status.set(TcpConnectionStatus.CLOSED);
+                    this.connectionRepository.remove(this.repositoryKey);
+                    return;
                 }
                 if (tcpHeader.isFin()) {
                     this.status.set(TcpConnectionStatus.CLOSE_WAIT);
@@ -225,7 +217,7 @@ public class TcpConnection implements Runnable {
                     this.status.set(TcpConnectionStatus.LAST_ACK);
                     this.writeFinAck();
                     Log.d(TcpConnection.class.getName(),
-                            "Receive fin, begin to close connection: " + this);
+                            "Receive fin, begin to close connection: " + this + ", incoming tcp packet: " + tcpPacket);
                     continue;
                 }
             } catch (Exception e) {
