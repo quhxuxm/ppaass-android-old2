@@ -15,10 +15,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -35,6 +32,7 @@ public class TcpConnection implements Runnable {
     private final AtomicLong currentAcknowledgementNumber;
     private final AtomicLong clientSyncSequenceNumber;
     private final Runnable remoteRelayToDeviceJob;
+    private final CountDownLatch establishLatch;
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpIpPacketWriter tcpIpPacketWriter,
                          Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository) {
@@ -48,6 +46,7 @@ public class TcpConnection implements Runnable {
         this.deviceInbound = new LinkedBlockingQueue<>();
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.connectionRepository = connectionRepository;
+        this.establishLatch = new CountDownLatch(1);
         this.remoteRelayToDeviceJob = new Runnable() {
             @Override
             public void run() {
@@ -55,8 +54,10 @@ public class TcpConnection implements Runnable {
                         TcpConnection.this.status.get() == TcpConnectionStatus.SYNC_RCVD ||
                         TcpConnection.this.status.get() == TcpConnectionStatus.ESTABLISHED) {
                     try {
+                        TcpConnection.this.establishLatch.await();
                         Log.d(TcpConnection.class.getName(),
-                                "Receive remote data write ack to device [begin], current connection: " + this);
+                                "Receive remote data write ack to device [begin], current connection: " +
+                                        TcpConnection.this);
                         byte[] remoteDataBuf = new byte[65536];
                         byte[] remoteData = TcpConnection.this.readFromRemote(remoteDataBuf);
                         if (remoteData == null) {
@@ -184,6 +185,7 @@ public class TcpConnection implements Runnable {
                         Executors.newSingleThreadExecutor().execute(this.remoteRelayToDeviceJob);
                         this.status.set(TcpConnectionStatus.ESTABLISHED);
                         this.currentSequenceNumber.set(tcpHeader.getAcknowledgementNumber());
+                        this.establishLatch.countDown();
                         Log.d(TcpConnection.class.getName(),
                                 "Receive ack [end.3], remote connection established, current connection: " + this);
                         continue;
