@@ -54,6 +54,7 @@ public class TcpConnection implements Runnable {
         this.connectionRepository = connectionRepository;
         this.establishLatch = new CountDownLatch(1);
         this.remoteSocketChannel = SocketChannel.open();
+        this.remoteSocketChannel.configureBlocking(true);
         if (!vpnService.protect(this.remoteSocketChannel.socket())) {
             Log.e(TcpConnection.class.getName(), "Fail to protect vpn tcp socket, current connection: " + this
                     + ", remote socket: " + this.remoteSocketChannel);

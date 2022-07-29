@@ -8,12 +8,10 @@ import com.ppaass.agent.protocol.general.udp.UdpPacketBuilder;
 import org.apache.commons.codec.binary.Hex;
 
 import java.io.OutputStream;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
-import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -35,36 +33,31 @@ public class IpV4UdpPacketHandler {
         this.udpThreadPool.execute(new Runnable() {
             @Override
             public void run() {
-                try (DatagramSocket deviceToRemoteUdpSocket = DatagramChannel.open().socket()) {
-                    Log.d(IpV4UdpPacketHandler.class.getName(), udpPacket.toString());
-//            InetAddress destinationAddress = InetAddress.getByName("10.246.128.21");
+                Log.d(IpV4UdpPacketHandler.class.getName(), udpPacket.toString());
+                try (DatagramChannel deviceToRemoteChannel = DatagramChannel.open()) {
+                    if (!IpV4UdpPacketHandler.this.vpnService.protect(deviceToRemoteChannel.socket())) {
+                        Log.e(IpV4UdpPacketHandler.class.getName(), "Fail to protect vpn udp socket");
+                        throw new UnsupportedOperationException("Fail to protect vpn udp socket");
+                    }
                     InetAddress destinationAddress = InetAddress.getByAddress(ipV4Header.getDestinationAddress());
                     int destinationPort = udpPacket.getHeader().getDestinationPort();
-//            int destinationPort = 53;
                     InetSocketAddress deviceToRemoteDestinationAddress =
                             new InetSocketAddress(destinationAddress, destinationPort);
-                    deviceToRemoteUdpSocket.setSoTimeout(20000);
-                    DatagramPacket deviceToRemoteUdpPacket =
-                            new DatagramPacket(udpPacket.getData(), udpPacket.getData().length);
+                    deviceToRemoteChannel.socket().setSoTimeout(20000);
                     Log.d(IpV4UdpPacketHandler.class.getName(),
                             "Begin to send udp packet to remote: " + udpPacket + ", destination: " +
                                     deviceToRemoteDestinationAddress);
                     Log.d(IpV4UdpPacketHandler.class.getName(),
                             "Udp content going to send:\n\n" + Hex.encodeHexString(udpPacket.getData()) + "\n\n");
-                    deviceToRemoteUdpSocket.connect(deviceToRemoteDestinationAddress);
-                    if (!IpV4UdpPacketHandler.this.vpnService.protect(deviceToRemoteUdpSocket)) {
-                        Log.e(IpV4UdpPacketHandler.class.getName(), "Fail to protect vpn udp socket");
-                        throw new UnsupportedOperationException("Fail to protect vpn udp socket");
-                    }
-                    deviceToRemoteUdpSocket.send(deviceToRemoteUdpPacket);
-                    byte[] remoteToDeviceUdpPacketContent = new byte[65535];
-                    DatagramPacket remoteRelayToDeviceUdpPacket =
-                            new DatagramPacket(remoteToDeviceUdpPacketContent, remoteToDeviceUdpPacketContent.length);
-                    deviceToRemoteUdpSocket.receive(remoteRelayToDeviceUdpPacket);
-                    deviceToRemoteUdpSocket.disconnect();
+                    deviceToRemoteChannel.connect(deviceToRemoteDestinationAddress);
+                    deviceToRemoteChannel.write(ByteBuffer.wrap(udpPacket.getData()));
+                    ByteBuffer remoteToDeviceUdpPacketContent = ByteBuffer.allocateDirect(65535);
+                    deviceToRemoteChannel.receive(remoteToDeviceUdpPacketContent);
+                    deviceToRemoteChannel.disconnect();
                     UdpPacketBuilder remoteToDeviceUdpPacketBuilder = new UdpPacketBuilder();
-                    byte[] packetFromRemoteToDeviceContent = Arrays.copyOf(remoteRelayToDeviceUdpPacket.getData(),
-                            remoteRelayToDeviceUdpPacket.getLength());
+                    remoteToDeviceUdpPacketContent.flip();
+                    byte[] packetFromRemoteToDeviceContent = new byte[remoteToDeviceUdpPacketContent.remaining()];
+                    remoteToDeviceUdpPacketContent.get(packetFromRemoteToDeviceContent);
                     remoteToDeviceUdpPacketBuilder.data(packetFromRemoteToDeviceContent);
                     remoteToDeviceUdpPacketBuilder.destinationPort(udpPacket.getHeader().getSourcePort());
                     remoteToDeviceUdpPacketBuilder.sourcePort(udpPacket.getHeader().getDestinationPort());
