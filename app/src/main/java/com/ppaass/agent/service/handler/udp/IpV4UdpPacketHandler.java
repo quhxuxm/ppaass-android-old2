@@ -12,6 +12,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.channels.DatagramChannel;
 import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,14 +28,14 @@ public class IpV4UdpPacketHandler {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.writeBufferSize = writeBufferSize;
         this.vpnService = vpnService;
-        this.udpThreadPool = Executors.newFixedThreadPool(128);
+        this.udpThreadPool = Executors.newFixedThreadPool(32);
     }
 
     public void handle(UdpPacket udpPacket, IpV4Header ipV4Header) {
         this.udpThreadPool.execute(new Runnable() {
             @Override
             public void run() {
-                try (DatagramSocket deviceToRemoteUdpSocket = new DatagramSocket()) {
+                try (DatagramSocket deviceToRemoteUdpSocket = DatagramChannel.open().socket()) {
                     Log.d(IpV4UdpPacketHandler.class.getName(), udpPacket.toString());
 //            InetAddress destinationAddress = InetAddress.getByName("10.246.128.21");
                     InetAddress destinationAddress = InetAddress.getByAddress(ipV4Header.getDestinationAddress());
@@ -43,7 +44,6 @@ public class IpV4UdpPacketHandler {
                     InetSocketAddress deviceToRemoteDestinationAddress =
                             new InetSocketAddress(destinationAddress, destinationPort);
                     deviceToRemoteUdpSocket.setSoTimeout(20000);
-                    IpV4UdpPacketHandler.this.vpnService.protect(deviceToRemoteUdpSocket);
                     DatagramPacket deviceToRemoteUdpPacket =
                             new DatagramPacket(udpPacket.getData(), udpPacket.getData().length);
                     Log.d(IpV4UdpPacketHandler.class.getName(),
@@ -52,6 +52,10 @@ public class IpV4UdpPacketHandler {
                     Log.d(IpV4UdpPacketHandler.class.getName(),
                             "Udp content going to send:\n\n" + Hex.encodeHexString(udpPacket.getData()) + "\n\n");
                     deviceToRemoteUdpSocket.connect(deviceToRemoteDestinationAddress);
+                    if (!IpV4UdpPacketHandler.this.vpnService.protect(deviceToRemoteUdpSocket)) {
+                        Log.e(IpV4UdpPacketHandler.class.getName(), "Fail to protect vpn udp socket");
+                        throw new UnsupportedOperationException("Fail to protect vpn udp socket");
+                    }
                     deviceToRemoteUdpSocket.send(deviceToRemoteUdpPacket);
                     byte[] remoteToDeviceUdpPacketContent = new byte[65535];
                     DatagramPacket remoteRelayToDeviceUdpPacket =
@@ -76,6 +80,7 @@ public class IpV4UdpPacketHandler {
                     ipV4HeaderBuilder.destinationAddress(ipV4Header.getSourceAddress());
                     ipV4HeaderBuilder.sourceAddress(ipV4Header.getDestinationAddress());
                     ipV4HeaderBuilder.protocol(IpDataProtocol.UDP);
+                    ipV4HeaderBuilder.identification((short) (Math.random() * 10000));
                     ipPacketBuilder.header(ipV4HeaderBuilder.build());
                     IpPacket ipPacket = ipPacketBuilder.build();
                     byte[] ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);

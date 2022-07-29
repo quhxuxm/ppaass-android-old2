@@ -1,11 +1,10 @@
 package com.ppaass.agent.activity;
 
 import android.content.Intent;
-import android.net.VpnManager;
 import android.net.VpnService;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.View;
+import android.widget.Button;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import com.ppaass.agent.R;
@@ -18,31 +17,30 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-    }
-
-    public void startVpn(View view) {
-        Intent prepareVpnIntent = VpnService.prepare(MainActivity.this);
-        if (prepareVpnIntent != null) {
-            startActivityForResult(prepareVpnIntent, VPN_SERVICE_REQUEST_CODE);
-            Log.d(MainActivity.class.getName(), "Vpn instance(existing) prepared ...");
-            return;
-        }
-        Log.d(MainActivity.class.getName(), "Vpn instance(new) prepared ...");
-        Intent startVpnServiceIntent = new Intent(MainActivity.this, PpaassVpnService.class);
-        this.startService(startVpnServiceIntent);
+        Button startVpnButton = this.findViewById(R.id.startButton);
+        startVpnButton.setOnClickListener(view -> {
+            Intent prepareVpnIntent = VpnService.prepare(getApplicationContext());
+            if (prepareVpnIntent != null) {
+                startActivityForResult(prepareVpnIntent, VPN_SERVICE_REQUEST_CODE);
+                Log.d(MainActivity.class.getName(), "Vpn instance(new) prepared ...");
+            } else {
+                Log.d(MainActivity.class.getName(), "Vpn instance(existing) prepared ...");
+                onActivityResult(VPN_SERVICE_REQUEST_CODE, RESULT_OK, null);
+            }
+        });
+        Button stopVpnButton = this.findViewById(R.id.stopButton);
+        stopVpnButton.setOnClickListener(view -> {
+            Intent intent = new Intent(this, PpaassVpnService.class);
+            stopService(intent);
+        });
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == VPN_SERVICE_REQUEST_CODE) {
-            Intent startVpnServiceIntent = new Intent(MainActivity.this, PpaassVpnService.class);
+        if (resultCode == RESULT_OK) {
+            Intent startVpnServiceIntent = new Intent(this, PpaassVpnService.class);
             this.startService(startVpnServiceIntent);
         }
-    }
-
-    public void stopVpn(View view) {
-        Intent intent = new Intent(this, PpaassVpnService.class);
-        stopService(intent);
     }
 }

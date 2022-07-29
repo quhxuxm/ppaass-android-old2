@@ -11,13 +11,14 @@ import com.ppaass.agent.service.handler.IpPacketHandler;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.UUID;
 
 public class PpaassVpnService extends VpnService {
     private static final String VPN_ADDRESS = "110.110.110.110";
     private static final String VPN_ROUTE = "0.0.0.0";
-    //private static final String DNS = "10.246.128.21";
-    private static final String DNS = "192.168.31.1";
+    private static final String DNS = "10.246.128.21";
+    //    private static final String DNS = "192.168.31.1";
     //    private static final String DNS = "8.8.8.8";
     private String id;
     private ParcelFileDescriptor vpnInterface;
@@ -36,14 +37,9 @@ public class PpaassVpnService extends VpnService {
         this.id = UUID.randomUUID().toString().replace("-", "");
         Log.i(PpaassVpnService.class.getName(), "onCreate: " + this.id);
         Builder vpnBuilder = new Builder();
-        vpnBuilder.addAddress(VPN_ADDRESS, 32);
-        vpnBuilder.addRoute(VPN_ROUTE, 0);
-        vpnBuilder.addDnsServer(DNS);
-        vpnBuilder.setMtu(1500);
-        vpnBuilder.setBlocking(false);
+        vpnBuilder.addAddress(VPN_ADDRESS, 32).addRoute(VPN_ROUTE, 0).addDnsServer(DNS).setMtu(1500).setBlocking(false);
         vpnBuilder.setSession(getString(R.string.app_name));
-        this.vpnInterface =
-                vpnBuilder.establish();
+        this.vpnInterface = vpnBuilder.establish();
         final FileDescriptor vpnFileDescriptor = vpnInterface.getFileDescriptor();
         this.rawDeviceInputStream = new FileInputStream(vpnFileDescriptor);
         this.rawDeviceOutputStream = new FileOutputStream(vpnFileDescriptor);
@@ -76,21 +72,13 @@ public class PpaassVpnService extends VpnService {
     }
 
     @Override
-    public void onRevoke() {
-        super.onRevoke();
-        Log.i(PpaassVpnService.class.getName(), "onRevoke: " + this.id);
-        this.running = false;
-        try {
-            this.vpnInterface.close();
-        } catch (Exception e) {
-            Log.e(PpaassVpnService.class.getName(), "Error happen when destroy vpn service", e);
-        }
-    }
-
-    @Override
     public void onDestroy() {
         super.onDestroy();
         this.running = false;
-        Log.i(PpaassVpnService.class.getName(), "onDestroy: " + this.id);
+        try {
+            this.vpnInterface.close();
+        } catch (IOException e) {
+            Log.e(PpaassVpnService.class.getName(), "Fail to close vpn interface: " + this.id, e);
+        }
     }
 }
