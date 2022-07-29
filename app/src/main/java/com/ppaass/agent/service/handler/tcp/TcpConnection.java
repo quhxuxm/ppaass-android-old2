@@ -76,20 +76,19 @@ public class TcpConnection implements Runnable {
                 Log.d(TcpConnection.class.getName(),
                         "Connection in establish status, begin to relay remote data to device, current connection: " +
                                 TcpConnection.this);
-                while (TcpConnection.this.status.get() == TcpConnectionStatus.ESTABLISHED) {
+                while (TcpConnection.this.status.get() == TcpConnectionStatus.ESTABLISHED ||
+                        TcpConnection.this.status.get() == TcpConnectionStatus.CLOSE_WAIT) {
                     try {
-//                        Log.d(TcpConnection.class.getName(),
-//                                "Begin next read from remote, current connection: " +
-//                                        TcpConnection.this);
                         byte[] remoteData =
                                 TcpConnection.this.readFromRemote();
                         if (remoteData == null) {
-                            TcpConnection.this.writeFin();
-                            TcpConnection.this.status.set(TcpConnectionStatus.FIN_WAIT1);
+                            synchronized (this) {
+                                this.wait(50);
+                            }
                             Log.d(TcpConnection.class.getName(),
-                                    "Nothing to read from remote, stop remote relay thread, and move to FIN_WAIT1, current connection: " +
+                                    "Nothing to read from remote, stop remote relay thread, current connection: " +
                                             TcpConnection.this);
-                            return;
+                            continue;
                         }
                         TcpConnection.this.currentSequenceNumber.addAndGet(remoteData.length);
                         Log.d(TcpConnection.class.getName(),
@@ -230,13 +229,13 @@ public class TcpConnection implements Runnable {
                         this.connectRemote();
                         this.status.set(TcpConnectionStatus.ESTABLISHED);
                         Executors.newSingleThreadExecutor().execute(this.remoteRelayToDeviceJob);
+                        this.establishLatch.countDown();
                         Log.d(TcpConnection.class.getName(),
                                 "Receive ack and remote connection established, current connection: " + this +
                                         ", incoming tcp packet: " + tcpPacket);
                         continue;
                     }
                     if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
-                        this.establishLatch.countDown();
                         int dataLength = tcpPacket.getData().length;
                         this.writeToRemote(tcpPacket.getData());
                         this.currentAcknowledgementNumber.addAndGet(dataLength);
@@ -275,6 +274,9 @@ public class TcpConnection implements Runnable {
                 if (tcpHeader.isFin()) {
                     if (!tcpHeader.isAck()) {
                         this.status.set(TcpConnectionStatus.CLOSE_WAIT);
+                        synchronized (this.remoteRelayToDeviceJob) {
+                            this.remoteRelayToDeviceJob.notify();
+                        }
                         this.connectionRepository.remove(this.repositoryKey);
                         this.currentAcknowledgementNumber.incrementAndGet();
                         this.writeAck(null);
@@ -303,7 +305,7 @@ public class TcpConnection implements Runnable {
                         return;
                     }
                     Log.e(TcpConnection.class.getName(),
-                            "Incorrect connection status going to close connection(fin process), current connection: " +
+                            "Incorrect connection status going to close connection(fin process), close directly, current connection: " +
                                     this +
                                     ", incoming tcp packet: " + tcpPacket);
                     this.status.set(TcpConnectionStatus.CLOSED);
