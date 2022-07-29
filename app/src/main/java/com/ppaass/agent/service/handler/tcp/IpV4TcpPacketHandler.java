@@ -71,7 +71,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         ipPacketBuilder.header(ipV4HeaderBuilder.build());
         IpPacket ipPacket = ipPacketBuilder.build();
         byte[] ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
-        Log.d(IpV4TcpPacketHandler.class.getName(),
+        Log.v(IpV4TcpPacketHandler.class.getName(),
                 "Write ip packet to device, current connection:  " + tcpConnection +
                         ", output ip packet: " + ipPacket);
         this.rawDeviceOutputStream.write(ipPacketBytes);
