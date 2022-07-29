@@ -84,12 +84,12 @@ public class TcpConnection implements Runnable {
                         byte[] remoteData =
                                 TcpConnection.this.readFromRemote();
                         if (remoteData == null) {
-//                            Thread.sleep(50);
-//                            Log.d(TcpConnection.class.getName(),
-//                                    "Nothing to read from remote, stop remote relay thread, current connection: " +
-//                                            TcpConnection.this);
-                            Thread.yield();
-                            continue;
+                            TcpConnection.this.writeFin();
+                            TcpConnection.this.status.set(TcpConnectionStatus.FIN_WAIT1);
+                            Log.d(TcpConnection.class.getName(),
+                                    "Nothing to read from remote, stop remote relay thread, and move to FIN_WAIT1, current connection: " +
+                                            TcpConnection.this);
+                            return;
                         }
                         TcpConnection.this.currentSequenceNumber.addAndGet(remoteData.length);
                         Log.d(TcpConnection.class.getName(),
@@ -151,6 +151,22 @@ public class TcpConnection implements Runnable {
     private void writeFinAck() throws Exception {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.fin(true);
+        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
+        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
+        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
+        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
+        tcpPacketBuilder.window(65535);
+        int timestamp = TIMESTAMP.getAndIncrement();
+        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
+        timestampByteBuffer.putInt(timestamp);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
+        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        this.tcpIpPacketWriter.write(this, ackTcpPacket);
+    }
+
+    private void writeFin() throws Exception {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.fin(true);
         tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
         tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
@@ -240,6 +256,14 @@ public class TcpConnection implements Runnable {
                                 "Receive last ack, close connection: " + this + ", incoming tcp packet: " + tcpPacket);
                         return;
                     }
+                    if (this.status.get() == TcpConnectionStatus.FIN_WAIT1) {
+                        this.writeToRemote(tcpPacket.getData());
+                        this.status.set(TcpConnectionStatus.FIN_WAIT2);
+                        Log.d(TcpConnection.class.getName(),
+                                "Receive ack after FIN_WAIT1, forward data to remove directly and make connection to FIN_WAIT2, current connection: " +
+                                        this + ", incoming tcp packet: " + tcpPacket);
+                        continue;
+                    }
                     Log.e(TcpConnection.class.getName(),
                             "Incorrect connection status going to close connection, current connection: " + this +
                                     ", incoming tcp packet: " + tcpPacket);
@@ -249,15 +273,43 @@ public class TcpConnection implements Runnable {
                     return;
                 }
                 if (tcpHeader.isFin()) {
-                    this.status.set(TcpConnectionStatus.CLOSE_WAIT);
+                    if (!tcpHeader.isAck()) {
+                        this.status.set(TcpConnectionStatus.CLOSE_WAIT);
+                        this.connectionRepository.remove(this.repositoryKey);
+                        this.currentAcknowledgementNumber.incrementAndGet();
+                        this.writeAck(null);
+                        this.status.set(TcpConnectionStatus.LAST_ACK);
+                        this.writeFinAck();
+                        Log.d(TcpConnection.class.getName(),
+                                "Receive fin, begin to close connection: " + this + ", incoming tcp packet: " +
+                                        tcpPacket);
+                        continue;
+                    }
+                    //Fin + Ack
+                    if (this.status.get() == TcpConnectionStatus.FIN_WAIT2) {
+                        this.currentSequenceNumber.incrementAndGet();
+                        this.currentAcknowledgementNumber.incrementAndGet();
+                        this.status.set(TcpConnectionStatus.TIME_WAIT);
+                        this.writeAck(null);
+                        Log.d(TcpConnection.class.getName(),
+                                "Receive fin ack after FIN_WAIT2, make connection to TIME_WAIT, current connection: " +
+                                        this + ", incoming tcp packet: " + tcpPacket);
+                        this.status.set(TcpConnectionStatus.CLOSED);
+                        this.connectionRepository.remove(this.repositoryKey);
+                        this.closeRemoteSocket();
+                        Log.d(TcpConnection.class.getName(),
+                                "After 2MSL make connection to CLOSED, current connection: " +
+                                        this);
+                        return;
+                    }
+                    Log.e(TcpConnection.class.getName(),
+                            "Incorrect connection status going to close connection(fin process), current connection: " +
+                                    this +
+                                    ", incoming tcp packet: " + tcpPacket);
+                    this.status.set(TcpConnectionStatus.CLOSED);
                     this.connectionRepository.remove(this.repositoryKey);
-                    this.currentAcknowledgementNumber.incrementAndGet();
-                    this.writeAck(null);
-                    this.status.set(TcpConnectionStatus.LAST_ACK);
-                    this.writeFinAck();
-                    Log.d(TcpConnection.class.getName(),
-                            "Receive fin, begin to close connection: " + this + ", incoming tcp packet: " + tcpPacket);
-                    continue;
+                    this.closeRemoteSocket();
+                    return;
                 }
             } catch (Exception e) {
                 this.status.set(TcpConnectionStatus.CLOSED);
