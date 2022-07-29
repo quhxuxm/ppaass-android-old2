@@ -87,6 +87,7 @@ public class TcpConnection implements Runnable {
 //                            Log.d(TcpConnection.class.getName(),
 //                                    "Nothing to read from remote, stop remote relay thread, current connection: " +
 //                                            TcpConnection.this);
+                            Thread.yield();
                             continue;
                         }
                         TcpConnection.this.currentSequenceNumber.addAndGet(remoteData.length);
@@ -278,7 +279,7 @@ public class TcpConnection implements Runnable {
             return null;
         }
         readBuffer.flip();
-        byte[] result=new byte[readBuffer.remaining()];
+        byte[] result = new byte[readBuffer.remaining()];
         readBuffer.get(result);
         return result;
     }
