@@ -2,6 +2,7 @@ import com.ppaass.agent.protocol.general.ip.*;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.general.tcp.TcpPacketBuilder;
 
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 /**
@@ -105,7 +106,9 @@ public class ProtocolTest {
         IpPacket ipPacket = IpPacketReader.INSTANCE.parse(ipDataByteArray);
         System.out.println(ipPacket);
         System.out.println("======================================");
-        byte[] ipPacketArray = IpPacketWriter.INSTANCE.write(ipPacket);
+        ByteBuffer ipPacketByteBuf = IpPacketWriter.INSTANCE.write(ipPacket);
+        byte[] ipPacketArray = new byte[ipPacketByteBuf.remaining()];
+        ipPacketByteBuf.get(ipPacketArray);
         short[] ipPacketArrayInShort = new short[ipPacketArray.length];
         for (int i = 0; i < ipPacketArray.length; i++) {
             ipPacketArrayInShort[i] = (short) (ipPacketArray[i] & 0xFF);
@@ -141,7 +144,9 @@ public class ProtocolTest {
         originalTcpPacket.getHeader().getOptions().forEach(tcpPacketBuilder::addOption);
         ipPacketBuilder.data(tcpPacketBuilder.build());
         IpPacket newIpPacket = ipPacketBuilder.build();
-        byte[] newIpPacketArray = IpPacketWriter.INSTANCE.write(newIpPacket);
+        ByteBuffer newIpPacketByteBuf = IpPacketWriter.INSTANCE.write(newIpPacket);
+        byte[] newIpPacketArray = new byte[newIpPacketByteBuf.remaining()];
+        newIpPacketByteBuf.get(newIpPacketArray);
         short[] newIpPacketArrayInShort = new short[newIpPacketArray.length];
         for (int i = 0; i < newIpPacketArray.length; i++) {
             newIpPacketArrayInShort[i] = (short) (newIpPacketArray[i] & 0xFF);
@@ -173,7 +178,9 @@ public class ProtocolTest {
         IpPacket ipPacket = IpPacketReader.INSTANCE.parse(ipDataByteArray);
         System.out.println(ipPacket);
         System.out.println("======================================");
-        byte[] ipPacketArray = IpPacketWriter.INSTANCE.write(ipPacket);
+        ByteBuffer ipPacketByteBuf = IpPacketWriter.INSTANCE.write(ipPacket);
+        byte[] ipPacketArray = new byte[ipPacketByteBuf.remaining()];
+        ipPacketByteBuf.get(ipPacketArray);
         short[] ipPacketArrayInShort = new short[ipPacketArray.length];
         for (int i = 0; i < ipPacketArray.length; i++) {
             ipPacketArrayInShort[i] = (short) (ipPacketArray[i] & 0xFF);

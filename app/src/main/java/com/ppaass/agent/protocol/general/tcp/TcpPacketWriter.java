@@ -8,6 +8,7 @@ import com.ppaass.agent.protocol.general.ip.IpV6Header;
 import java.nio.ByteBuffer;
 
 public class TcpPacketWriter {
+    private static final int FAKE_HEADER_LENGTH=12;
     public static final TcpPacketWriter INSTANCE = new TcpPacketWriter();
 
     private TcpPacketWriter() {
@@ -20,21 +21,21 @@ public class TcpPacketWriter {
         return 0;
     }
 
-    public byte[] write(TcpPacket packet, IpV4Header ipHeader) {
-        ByteBuffer fakeHeaderByteBuffer = ByteBuffer.allocate(12);
-        fakeHeaderByteBuffer.put(ipHeader.getSourceAddress());
-        fakeHeaderByteBuffer.put(ipHeader.getDestinationAddress());
-        fakeHeaderByteBuffer.put((byte) 0);
-        fakeHeaderByteBuffer.put((byte) IpDataProtocol.TCP.getValue());
-        fakeHeaderByteBuffer.putShort((short) (packet.getHeader().getOffset() * 4 + packet.getData().length));
-        fakeHeaderByteBuffer.flip();
+    public ByteBuffer write(TcpPacket packet, IpV4Header ipHeader) {
+        ByteBuffer tcpFakeHeaderBytes = ByteBuffer.allocateDirect(FAKE_HEADER_LENGTH);
+        tcpFakeHeaderBytes.put(ipHeader.getSourceAddress());
+        tcpFakeHeaderBytes.put(ipHeader.getDestinationAddress());
+        tcpFakeHeaderBytes.put((byte) 0);
+        tcpFakeHeaderBytes.put((byte) IpDataProtocol.TCP.getValue());
+        tcpFakeHeaderBytes.putShort((short) (packet.getHeader().getOffset() * 4 + packet.getData().length));
+        tcpFakeHeaderBytes.flip();
         ByteBuffer byteBufferForChecksum =
-                ByteBuffer.allocate(packet.getHeader().getOffset() * 4 + 12 + packet.getData().length);
-        byteBufferForChecksum.put(fakeHeaderByteBuffer);
-        byte[] tcpPacketBytesForChecksum = this.writeWithGivenChecksum(packet, 0);
+                ByteBuffer.allocateDirect(packet.getHeader().getOffset() * 4 + FAKE_HEADER_LENGTH + packet.getData().length);
+        byteBufferForChecksum.put(tcpFakeHeaderBytes);
+        ByteBuffer tcpPacketBytesForChecksum = this.writeWithGivenChecksum(packet, 0);
         byteBufferForChecksum.put(tcpPacketBytesForChecksum);
         byteBufferForChecksum.flip();
-        int checksum = ChecksumUtil.INSTANCE.checksum(byteBufferForChecksum.array());
+        int checksum = ChecksumUtil.INSTANCE.checksum(byteBufferForChecksum);
         byteBufferForChecksum.clear();
         return this.writeWithGivenChecksum(packet, checksum);
     }
@@ -43,8 +44,8 @@ public class TcpPacketWriter {
         throw new UnsupportedOperationException("Do not support IPv6");
     }
 
-    private byte[] writeWithGivenChecksum(TcpPacket packet, int checksum) {
-        ByteBuffer byteBuffer = ByteBuffer.allocate(packet.getHeader().getOffset() * 4 + packet.getData().length);
+    private ByteBuffer writeWithGivenChecksum(TcpPacket packet, int checksum) {
+        ByteBuffer byteBuffer = ByteBuffer.allocateDirect(packet.getHeader().getOffset() * 4 + packet.getData().length);
         byteBuffer.putShort((short) packet.getHeader().getSourcePort());
         byteBuffer.putShort((short) packet.getHeader().getDestinationPort());
         byteBuffer.putInt((int) packet.getHeader().getSequenceNumber());
@@ -79,10 +80,7 @@ public class TcpPacketWriter {
             }
             optionAndPaddingByteBuffer.put(option.getInfo());
         }
-        int bytesNumber = 0;
-        if (optionAndPaddingByteBuffer.position() > 0) {
-            bytesNumber = optionAndPaddingByteBuffer.position();
-        }
+        int bytesNumber = Math.max(optionAndPaddingByteBuffer.position(), 0);
         int paddingByteNumber = 0;
         if (bytesNumber % 4 != 0) {
             paddingByteNumber = 4 - (bytesNumber % 4);
@@ -96,8 +94,6 @@ public class TcpPacketWriter {
         byteBuffer.put(optionAndPaddingBytes);
         byteBuffer.put(packet.getData());
         byteBuffer.flip();
-        byte[] result = byteBuffer.array();
-        byteBuffer.clear();
-        return result;
+        return byteBuffer;
     }
 }

@@ -275,6 +275,7 @@ public class TcpConnection implements Runnable {
                         this.writeToRemote(tcpPacket.getData());
                         int dataLength = tcpPacket.getData().length;
                         this.currentAcknowledgementNumber.addAndGet(dataLength);
+//                        this.currentAcknowledgementNumber.incrementAndGet();
                         this.writeAckToDevice();
                         Log.d(TcpConnection.class.getName(),
                                 "Receive ACK(PSH=" + tcpHeader.isPsh() +

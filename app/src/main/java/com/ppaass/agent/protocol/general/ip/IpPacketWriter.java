@@ -1,10 +1,10 @@
 package com.ppaass.agent.protocol.general.ip;
 
+import com.ppaass.agent.protocol.general.ChecksumUtil;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.general.tcp.TcpPacketWriter;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacketWriter;
-import com.ppaass.agent.protocol.general.ChecksumUtil;
 
 import java.nio.ByteBuffer;
 
@@ -21,34 +21,30 @@ public class IpPacketWriter {
         return 0;
     }
 
-    public byte[] write(IpPacket packet) {
+    public ByteBuffer write(IpPacket packet) {
         if (IpHeaderVersion.V4 != packet.getHeader().getVersion()) {
             throw new UnsupportedOperationException("Only support IpV4.");
         }
-        byte[] headerToDoChecksum = this.writeIpV4HeaderWithGivenChecksum(packet, 0);
+        ByteBuffer headerToDoChecksum = this.writeIpV4HeaderWithGivenChecksum(packet, 0);
         int headerChecksum = ChecksumUtil.INSTANCE.checksum(headerToDoChecksum);
-        byte[] headerBytes = this.writeIpV4HeaderWithGivenChecksum(packet, headerChecksum);
+        ByteBuffer headerBytes = this.writeIpV4HeaderWithGivenChecksum(packet, headerChecksum);
         IpV4Header ipV4Header = (IpV4Header) packet.getHeader();
-        ByteBuffer resultBuffer = ByteBuffer.allocate(ipV4Header.getTotalLength());
+        ByteBuffer resultBuffer = ByteBuffer.allocateDirect(ipV4Header.getTotalLength());
         resultBuffer.put(headerBytes);
         if (IpDataProtocol.TCP == ipV4Header.getProtocol()) {
             resultBuffer.put(TcpPacketWriter.INSTANCE.write((TcpPacket) packet.getData(), ipV4Header));
             resultBuffer.flip();
-            byte[] result = resultBuffer.array();
-            resultBuffer.clear();
-            return result;
+            return resultBuffer;
         }
         if (IpDataProtocol.UDP == ipV4Header.getProtocol()) {
             resultBuffer.put(UdpPacketWriter.INSTANCE.write((UdpPacket) packet.getData(), ipV4Header));
             resultBuffer.flip();
-            byte[] result = resultBuffer.array();
-            resultBuffer.clear();
-            return result;
+            return resultBuffer;
         }
         throw new UnsupportedOperationException("Do not support other protocol.");
     }
 
-    private byte[] writeIpV4HeaderWithGivenChecksum(IpPacket packet, int checksum) {
+    private ByteBuffer writeIpV4HeaderWithGivenChecksum(IpPacket packet, int checksum) {
         IpV4Header ipV4Header = (IpV4Header) packet.getHeader();
         ByteBuffer byteBuffer = ByteBuffer.allocate(ipV4Header.getInternetHeaderLength() * 4);
         byte versionAndHeaderLength =
@@ -76,8 +72,6 @@ public class IpPacketWriter {
         byteBuffer.put(ipV4Header.getDestinationAddress());
         byteBuffer.put(ipV4Header.getOptions());
         byteBuffer.flip();
-        byte[] result = byteBuffer.array();
-        byteBuffer.clear();
-        return result;
+        return byteBuffer;
     }
 }

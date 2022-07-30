@@ -9,6 +9,7 @@ import com.ppaass.agent.service.handler.TcpIpPacketWriter;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -70,11 +71,14 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         ipV4HeaderBuilder.protocol(IpDataProtocol.TCP);
         ipPacketBuilder.header(ipV4HeaderBuilder.build());
         IpPacket ipPacket = ipPacketBuilder.build();
-        byte[] ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
+        ByteBuffer ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
         Log.v(IpV4TcpPacketHandler.class.getName(),
                 "Write ip packet to device, current connection:  " + tcpConnection +
                         ", output ip packet: " + ipPacket);
-        this.rawDeviceOutputStream.write(ipPacketBytes);
+        byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
+        ipPacketBytes.get(bytesWriteToDevice);
+        ipPacketBytes.clear();
+        this.rawDeviceOutputStream.write(bytesWriteToDevice);
         this.rawDeviceOutputStream.flush();
     }
 }

@@ -76,8 +76,11 @@ public class IpV4UdpPacketHandler {
                     ipV4HeaderBuilder.identification((short) (Math.random() * 10000));
                     ipPacketBuilder.header(ipV4HeaderBuilder.build());
                     IpPacket ipPacket = ipPacketBuilder.build();
-                    byte[] ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
-                    IpV4UdpPacketHandler.this.rawDeviceOutputStream.write(ipPacketBytes);
+                    ByteBuffer ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
+                    byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
+                    ipPacketBytes.get(bytesWriteToDevice);
+                    ipPacketBytes.clear();
+                    IpV4UdpPacketHandler.this.rawDeviceOutputStream.write(bytesWriteToDevice);
                     IpV4UdpPacketHandler.this.rawDeviceOutputStream.flush();
                 } catch (Exception e) {
                     Log.e(IpV4UdpPacketHandler.class.getName(),
