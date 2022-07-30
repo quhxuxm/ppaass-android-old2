@@ -146,21 +146,27 @@ public class IpV4Header implements IIpHeader {
 
     @Override
     public String toString() {
-        return "IpV4Header{" +
-                "version=" + version +
-                ", internetHeaderLength=" + internetHeaderLength +
-                ", ds=" + ds +
-                ", ecn=" + ecn +
-                ", totalLength=" + totalLength +
-                ", identification=" + identification +
-                ", flags=" + flags +
-                ", fragmentOffset=" + fragmentOffset +
-                ", ttl=" + ttl +
-                ", protocol=" + protocol +
-                ", checksum=" + checksum +
-                ", sourceAddress=" + Arrays.toString(sourceAddress) +
-                ", destinationAddress=" + Arrays.toString(destinationAddress) +
-                ", options=" + Arrays.toString(options) +
-                '}';
+        int[] sourceAddressForPrint = new int[4];
+        for (int i = 0; i < 4; i++) {
+            if (sourceAddress[i] < 0) {
+                sourceAddressForPrint[i] = 256 + sourceAddress[i];
+            } else {
+                sourceAddressForPrint[i] = sourceAddress[i];
+            }
+        }
+        int[] destinationAddressForPrint = new int[4];
+        for (int i = 0; i < 4; i++) {
+            if (destinationAddress[i] < 0) {
+                destinationAddressForPrint[i] = 256 + destinationAddress[i];
+            } else {
+                destinationAddressForPrint[i] = destinationAddress[i];
+            }
+        }
+        return "IpV4Header{" + "version=" + version + ", internetHeaderLength=" + internetHeaderLength + ", ds=" + ds +
+                ", ecn=" + ecn + ", totalLength=" + totalLength + ", identification=" + identification + ", flags=" +
+                flags + ", fragmentOffset=" + fragmentOffset + ", ttl=" + ttl + ", protocol=" + protocol +
+                ", checksum=" + checksum + ", sourceAddress=" + Arrays.toString(sourceAddressForPrint) +
+                ", destinationAddress=" + Arrays.toString(destinationAddressForPrint) + ", options=" +
+                Arrays.toString(options) + '}';
     }
 }

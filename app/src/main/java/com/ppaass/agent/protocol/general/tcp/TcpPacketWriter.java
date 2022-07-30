@@ -6,9 +6,10 @@ import com.ppaass.agent.protocol.general.ip.IpV4Header;
 import com.ppaass.agent.protocol.general.ip.IpV6Header;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
 public class TcpPacketWriter {
-    private static final int FAKE_HEADER_LENGTH=12;
+    private static final int FAKE_HEADER_LENGTH = 12;
     public static final TcpPacketWriter INSTANCE = new TcpPacketWriter();
 
     private TcpPacketWriter() {
@@ -23,16 +24,20 @@ public class TcpPacketWriter {
 
     public ByteBuffer write(TcpPacket packet, IpV4Header ipHeader) {
         ByteBuffer tcpFakeHeaderBytes = ByteBuffer.allocateDirect(FAKE_HEADER_LENGTH);
+        tcpFakeHeaderBytes.order(ByteOrder.BIG_ENDIAN);
         tcpFakeHeaderBytes.put(ipHeader.getSourceAddress());
         tcpFakeHeaderBytes.put(ipHeader.getDestinationAddress());
         tcpFakeHeaderBytes.put((byte) 0);
         tcpFakeHeaderBytes.put((byte) IpDataProtocol.TCP.getValue());
-        tcpFakeHeaderBytes.putShort((short) (packet.getHeader().getOffset() * 4 + packet.getData().length));
+        tcpFakeHeaderBytes.putShort((short) ((packet.getHeader().getOffset() * 4 + packet.getData().length) & 0xFFFF));
         tcpFakeHeaderBytes.flip();
         ByteBuffer byteBufferForChecksum =
-                ByteBuffer.allocateDirect(packet.getHeader().getOffset() * 4 + FAKE_HEADER_LENGTH + packet.getData().length);
+                ByteBuffer.allocateDirect(
+                        packet.getHeader().getOffset() * 4 + FAKE_HEADER_LENGTH + packet.getData().length);
+        byteBufferForChecksum.order(ByteOrder.BIG_ENDIAN);
         byteBufferForChecksum.put(tcpFakeHeaderBytes);
         ByteBuffer tcpPacketBytesForChecksum = this.writeWithGivenChecksum(packet, 0);
+        tcpPacketBytesForChecksum.order(ByteOrder.BIG_ENDIAN);
         byteBufferForChecksum.put(tcpPacketBytesForChecksum);
         byteBufferForChecksum.flip();
         int checksum = ChecksumUtil.INSTANCE.checksum(byteBufferForChecksum);
@@ -45,11 +50,12 @@ public class TcpPacketWriter {
     }
 
     private ByteBuffer writeWithGivenChecksum(TcpPacket packet, int checksum) {
-        ByteBuffer byteBuffer = ByteBuffer.allocateDirect(packet.getHeader().getOffset() * 4 + packet.getData().length);
-        byteBuffer.putShort((short) packet.getHeader().getSourcePort());
-        byteBuffer.putShort((short) packet.getHeader().getDestinationPort());
-        byteBuffer.putInt((int) packet.getHeader().getSequenceNumber());
-        byteBuffer.putInt((int) packet.getHeader().getAcknowledgementNumber());
+        ByteBuffer resultBuf = ByteBuffer.allocateDirect(packet.getHeader().getOffset() * 4 + packet.getData().length);
+        resultBuf.order(ByteOrder.BIG_ENDIAN);
+        resultBuf.putShort((short) (packet.getHeader().getSourcePort() & 0xFFFF));
+        resultBuf.putShort((short) (packet.getHeader().getDestinationPort() & 0xFFFF));
+        resultBuf.putInt((int) packet.getHeader().getSequenceNumber());
+        resultBuf.putInt((int) packet.getHeader().getAcknowledgementNumber());
         int offsetAndResolvedAndUAPRSF = (packet.getHeader().getOffset() << 6) | (packet.getHeader().getResolve());
         offsetAndResolvedAndUAPRSF = offsetAndResolvedAndUAPRSF << 6;
         int flags = (this.convertBoolean(packet.getHeader().isUrg()) << 5) |
@@ -59,24 +65,25 @@ public class TcpPacketWriter {
                 (this.convertBoolean(packet.getHeader().isSyn()) << 1) |
                 this.convertBoolean(packet.getHeader().isFin());
         offsetAndResolvedAndUAPRSF = offsetAndResolvedAndUAPRSF | flags;
-        byteBuffer.putShort((short) offsetAndResolvedAndUAPRSF);
-        byteBuffer.putShort((short) packet.getHeader().getWindow());
-        byteBuffer.putShort((short) checksum);
-        byteBuffer.putShort((short) packet.getHeader().getUrgPointer());
-        ByteBuffer optionAndPaddingByteBuffer = ByteBuffer.allocate(40);
+        resultBuf.putShort((short) (offsetAndResolvedAndUAPRSF & 0xFFFF));
+        resultBuf.putShort((short) (packet.getHeader().getWindow() & 0xFFFF));
+        resultBuf.putShort((short) (checksum & 0xFFFF));
+        resultBuf.putShort((short) (packet.getHeader().getUrgPointer() & 0xFFFF));
+        ByteBuffer optionAndPaddingByteBuffer = ByteBuffer.allocateDirect(40);
+        optionAndPaddingByteBuffer.order(ByteOrder.BIG_ENDIAN);
         for (TcpHeaderOption option : packet.getHeader().getOptions()) {
             if (option.getKind() == TcpHeaderOption.Kind.EOL) {
                 break;
             }
             if (option.getKind() == TcpHeaderOption.Kind.NOP) {
-                optionAndPaddingByteBuffer.put((byte) TcpHeaderOption.Kind.NOP.getValue());
+                optionAndPaddingByteBuffer.put((byte) (TcpHeaderOption.Kind.NOP.getValue() & 0xFF));
                 continue;
             }
-            optionAndPaddingByteBuffer.put((byte) option.getKind().getValue());
+            optionAndPaddingByteBuffer.put((byte) (option.getKind().getValue() & 0xFF));
             if (option.getKind().getInfoLength() == -1) {
-                optionAndPaddingByteBuffer.put((byte) (option.getInfo().length + 2));
+                optionAndPaddingByteBuffer.put((byte) ((option.getInfo().length + 2) & 0xFF));
             } else {
-                optionAndPaddingByteBuffer.put((byte) (option.getKind().getInfoLength() + 2));
+                optionAndPaddingByteBuffer.put((byte) ((option.getKind().getInfoLength() + 2) & 0xFF));
             }
             optionAndPaddingByteBuffer.put(option.getInfo());
         }
@@ -89,11 +96,9 @@ public class TcpPacketWriter {
             optionAndPaddingByteBuffer.put((byte) 0);
         }
         optionAndPaddingByteBuffer.flip();
-        byte[] optionAndPaddingBytes = new byte[optionAndPaddingByteBuffer.remaining()];
-        optionAndPaddingByteBuffer.get(optionAndPaddingBytes);
-        byteBuffer.put(optionAndPaddingBytes);
-        byteBuffer.put(packet.getData());
-        byteBuffer.flip();
-        return byteBuffer;
+        resultBuf.put(optionAndPaddingByteBuffer);
+        resultBuf.put(packet.getData());
+        resultBuf.flip();
+        return resultBuf;
     }
 }

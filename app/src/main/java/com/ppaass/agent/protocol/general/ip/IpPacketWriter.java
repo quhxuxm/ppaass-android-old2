@@ -46,9 +46,9 @@ public class IpPacketWriter {
 
     private ByteBuffer writeIpV4HeaderWithGivenChecksum(IpPacket packet, int checksum) {
         IpV4Header ipV4Header = (IpV4Header) packet.getHeader();
-        ByteBuffer byteBuffer = ByteBuffer.allocate(ipV4Header.getInternetHeaderLength() * 4);
+        ByteBuffer byteBuffer = ByteBuffer.allocateDirect(ipV4Header.getInternetHeaderLength() * 4);
         byte versionAndHeaderLength =
-                (byte) (IpHeaderVersion.V4.getValue() << 4 | ipV4Header.getInternetHeaderLength());
+                (byte) ((IpHeaderVersion.V4.getValue() << 4 | ipV4Header.getInternetHeaderLength()) & 0xFF);
         byteBuffer.put(versionAndHeaderLength);
         byte serviceType =
                 (byte) ((ipV4Header.getDs().getImportance() << 5) |
@@ -57,17 +57,17 @@ public class IpPacketWriter {
                         this.convertBoolean(ipV4Header.getDs().isHighAvailability()) << 2 |
                         this.convertBoolean(ipV4Header.getEcn().isLowCost()) << 1 | ipV4Header.getEcn().getResolve());
         byteBuffer.put(serviceType);
-        byteBuffer.putShort((short) ipV4Header.getTotalLength());
-        byteBuffer.putShort((short) ipV4Header.getIdentification());
+        byteBuffer.putShort((short) (ipV4Header.getTotalLength() & 0xFFFF));
+        byteBuffer.putShort((short) (ipV4Header.getIdentification() & 0xFFFF));
         int flagsBit =
                 ipV4Header.getFlags().getResolved() << 2 | this.convertBoolean(ipV4Header.getFlags().isDf()) << 1 |
                         this.convertBoolean(ipV4Header.getFlags().isMf());
         flagsBit = flagsBit << 13;
         int flagsAndOffset = flagsBit | ipV4Header.getFragmentOffset();
-        byteBuffer.putShort((short) flagsAndOffset);
-        byteBuffer.put((byte) ipV4Header.getTtl());
-        byteBuffer.put((byte) ipV4Header.getProtocol().getValue());
-        byteBuffer.putShort((short) checksum);
+        byteBuffer.putShort((short) (flagsAndOffset & 0xFFFF));
+        byteBuffer.put((byte) (ipV4Header.getTtl() & 0xFF));
+        byteBuffer.put((byte) (ipV4Header.getProtocol().getValue() & 0xFF));
+        byteBuffer.putShort((short) (checksum & 0xFFFF));
         byteBuffer.put(ipV4Header.getSourceAddress());
         byteBuffer.put(ipV4Header.getDestinationAddress());
         byteBuffer.put(ipV4Header.getOptions());

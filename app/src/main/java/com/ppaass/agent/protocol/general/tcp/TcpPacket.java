@@ -25,9 +25,6 @@ public class TcpPacket implements IIpData {
 
     @Override
     public String toString() {
-        return "TcpPacket{" +
-                "header=" + header +
-                ", data size = " + data.length +
-                '}';
+        return "TcpPacket{" + "header=" + header + ", data size = " + data.length + '}';
     }
 }

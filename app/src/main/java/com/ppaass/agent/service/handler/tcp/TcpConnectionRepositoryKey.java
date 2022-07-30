@@ -53,11 +53,24 @@ public class TcpConnectionRepositoryKey {
 
     @Override
     public String toString() {
-        return "TcpConnectionRepositoryKey{" +
-                "sourceAddress=" + Arrays.toString(sourceAddress) +
-                ", sourcePort=" + sourcePort +
-                ", destinationAddress=" + Arrays.toString(destinationAddress) +
-                ", destinationPort=" + destinationPort +
-                '}';
+        int[] sourceAddressForPrint = new int[4];
+        for (int i = 0; i < 4; i++) {
+            if (sourceAddress[i] < 0) {
+                sourceAddressForPrint[i] = 256 + sourceAddress[i];
+            } else {
+                sourceAddressForPrint[i] = sourceAddress[i];
+            }
+        }
+        int[] destinationAddressForPrint = new int[4];
+        for (int i = 0; i < 4; i++) {
+            if (destinationAddress[i] < 0) {
+                destinationAddressForPrint[i] = 256 + destinationAddress[i];
+            } else {
+                destinationAddressForPrint[i] = destinationAddress[i];
+            }
+        }
+        return "TcpConnectionRepositoryKey{" + "sourceAddress=" + Arrays.toString(sourceAddressForPrint) +
+                ", sourcePort=" + sourcePort + ", destinationAddress=" + Arrays.toString(destinationAddressForPrint) +
+                ", destinationPort=" + destinationPort + '}';
     }
 }

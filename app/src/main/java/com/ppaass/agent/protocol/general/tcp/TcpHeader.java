@@ -163,25 +163,10 @@ public class TcpHeader {
             optionsBuilder.append(option.getKind().name()).append(":").append(Arrays.toString(option.getInfo()))
                     .append(",");
         });
-        return "TcpHeader{" +
-                "sourcePort=" + sourcePort +
-                ", destinationPort=" + destinationPort +
-                ", sequenceNumber=" + sequenceNumber +
-                ", acknowledgementNumber=" + acknowledgementNumber +
-                ", offset=" + offset +
-                ", resolve=" + resolve +
-                ", window=" + window +
-                ", checksum=" + checksum +
-                ", urgPointer=" + urgPointer +
-                ", options={" +
-                optionsBuilder.toString()
-                + "}" +
-                ", URG=" + urg +
-                ", ACK=" + ack +
-                ", PSH=" + psh +
-                ", RST=" + rst +
-                ", SYN=" + syn +
-                ", FIN=" + fin +
-                '}';
+        return "TcpHeader{" + "sourcePort=" + sourcePort + ", destinationPort=" + destinationPort +
+                ", sequenceNumber=" + sequenceNumber + ", acknowledgementNumber=" + acknowledgementNumber +
+                ", offset=" + offset + ", resolve=" + resolve + ", window=" + window + ", checksum=" + checksum +
+                ", urgPointer=" + urgPointer + ", options={" + optionsBuilder + "}" + ", URG=" + urg +
+                ", ACK=" + ack + ", PSH=" + psh + ", RST=" + rst + ", SYN=" + syn + ", FIN=" + fin + '}';
     }
 }

@@ -32,19 +32,20 @@ public class ChecksumUtil {
 //    }
 
     public short checksum(ByteBuffer byteBuffer) {
+        byteBuffer.order(ByteOrder.BIG_ENDIAN);
         int sum = 0;
-        while (byteBuffer.remaining() > 1) {
+        if (byteBuffer.remaining() % 2 != 0) {
+            byteBuffer.put((byte) 0);
+        }
+        while (byteBuffer.remaining() > 0) {
             int currentShort = byteBuffer.getShort() & 0xFFFF;
             sum += currentShort;
         }
-        if (byteBuffer.remaining() == 1) {
-            byte finalByte = byteBuffer.get();
-            int finalShort = (finalByte & 0xFF) << 8;
-            sum += finalShort;
-        }
         while (sum >> 16 > 0) {
-            sum = (sum & 0xFFFF) + (sum >> 16);
+            sum = ((sum & 0xFFFF) + (sum >> 16));
         }
-        return (short) ~sum;
+        sum = ~sum;
+        sum = sum & 0xFFFF;
+        return (short) sum;
     }
 }
