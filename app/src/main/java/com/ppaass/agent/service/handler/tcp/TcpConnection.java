@@ -203,7 +203,6 @@ public class TcpConnection implements Runnable {
                         this.writeToRemote(tcpPacket.getData());
                         int dataLength = tcpPacket.getData().length;
                         this.currentAcknowledgementNumber.addAndGet(dataLength);
-//                        this.currentAcknowledgementNumber.getAndIncrement();
                         this.writeAckToDevice();
                         Log.d(TcpConnection.class.getName(),
                                 "Receive ACK - (PSH=" + tcpHeader.isPsh() +
@@ -309,23 +308,36 @@ public class TcpConnection implements Runnable {
         }
     }
 
-    private void writeSyncAckToDevice() throws Exception {
-        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
-        tcpPacketBuilder.ack(true);
-        tcpPacketBuilder.syn(true);
+    private TcpPacket buildCommonTcpPacket(TcpPacketBuilder tcpPacketBuilder) {
         tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
         tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
         tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
         tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        ByteBuffer mssBuffer = ByteBuffer.allocateDirect(2);
+        mssBuffer.putShort(IVpnConst.TCP_MSS);
+        mssBuffer.flip();
+        byte[] mssBytes = new byte[2];
+        mssBuffer.get(mssBytes);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssBytes));
+        int timestamp = TIMESTAMP.getAndIncrement();
+        ByteBuffer timestampBuffer = ByteBuffer.allocateDirect(4);
+        timestampBuffer.putInt(timestamp);
+        timestampBuffer.flip();
+        byte[] timestampBytes = new byte[4];
+        timestampBuffer.get(timestampBytes);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampBytes));
+        return tcpPacketBuilder.build();
+    }
+
+    private void writeSyncAckToDevice() throws Exception {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.syn(true);
         ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
         mssByteBuffer.putShort(IVpnConst.TCP_MSS);
         tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket syncAckTcpPacket = tcpPacketBuilder.build();
+        TcpPacket syncAckTcpPacket = this.buildCommonTcpPacket(tcpPacketBuilder);
         this.tcpIpPacketWriter.write(this, syncAckTcpPacket);
 //        this.deviceOutbound.put(syncAckTcpPacket);
     }
@@ -333,19 +345,7 @@ public class TcpConnection implements Runnable {
     private void writeAckToDevice() throws Exception {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.ack(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        TcpPacket ackTcpPacket = this.buildCommonTcpPacket(tcpPacketBuilder);
         this.tcpIpPacketWriter.write(this, ackTcpPacket);
 //        this.deviceOutbound.put(ackTcpPacket);
     }
@@ -354,20 +354,7 @@ public class TcpConnection implements Runnable {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.ack(true);
         tcpPacketBuilder.psh(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.data(ackData);
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        TcpPacket ackTcpPacket = this.buildCommonTcpPacket(tcpPacketBuilder);
         this.tcpIpPacketWriter.write(this, ackTcpPacket);
 //        this.deviceOutbound.put(ackTcpPacket);
     }
@@ -376,19 +363,7 @@ public class TcpConnection implements Runnable {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.ack(true);
         tcpPacketBuilder.fin(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        TcpPacket ackTcpPacket = this.buildCommonTcpPacket(tcpPacketBuilder);
         this.tcpIpPacketWriter.write(this, ackTcpPacket);
 //        this.deviceOutbound.put(ackTcpPacket);
     }
@@ -396,19 +371,7 @@ public class TcpConnection implements Runnable {
     private void writeFinToDevice() throws Exception {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.fin(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        TcpPacket ackTcpPacket = this.buildCommonTcpPacket(tcpPacketBuilder);
         this.tcpIpPacketWriter.write(this, ackTcpPacket);
 //        this.deviceOutbound.put(ackTcpPacket);
     }
