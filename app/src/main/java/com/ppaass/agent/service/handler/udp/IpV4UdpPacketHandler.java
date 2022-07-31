@@ -78,8 +78,10 @@ public class IpV4UdpPacketHandler {
                     byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
                     ipPacketBytes.get(bytesWriteToDevice);
                     ipPacketBytes.clear();
-                    IpV4UdpPacketHandler.this.rawDeviceOutputStream.write(bytesWriteToDevice);
-                    IpV4UdpPacketHandler.this.rawDeviceOutputStream.flush();
+                    synchronized (IpV4UdpPacketHandler.this.rawDeviceOutputStream) {
+                        IpV4UdpPacketHandler.this.rawDeviceOutputStream.write(bytesWriteToDevice);
+                        IpV4UdpPacketHandler.this.rawDeviceOutputStream.flush();
+                    }
                 } catch (Exception e) {
                     Log.e(IpV4UdpPacketHandler.class.getName(),
                             "Fail to handle udp packet because of exception, udp packet: " + udpPacket, e);

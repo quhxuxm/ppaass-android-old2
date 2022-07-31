@@ -8,10 +8,10 @@ import android.util.Log;
 import com.ppaass.agent.R;
 import com.ppaass.agent.service.handler.IpPacketHandler;
 
-import java.io.FileDescriptor;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
+import java.nio.channels.Channel;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.util.UUID;
 
 public class PpaassVpnService extends VpnService {
@@ -35,8 +35,9 @@ public class PpaassVpnService extends VpnService {
         this.id = UUID.randomUUID().toString().replace("-", "");
         Log.i(PpaassVpnService.class.getName(), "onCreate: " + this.id);
         Builder vpnBuilder = new Builder();
-        vpnBuilder.addAddress(VPN_ADDRESS, 32).addRoute(VPN_ROUTE, 0).addDnsServer(DNS).setMtu(IVpnConst.MTU)
-                .setBlocking(false);
+        vpnBuilder.addAddress(VPN_ADDRESS, 32).addRoute(VPN_ROUTE, 0).addDnsServer(DNS)
+                .setMtu(IVpnConst.MTU)
+                .setBlocking(true);
         vpnBuilder.setSession(getString(R.string.app_name));
         this.vpnInterface = vpnBuilder.establish();
         final FileDescriptor vpnFileDescriptor = vpnInterface.getFileDescriptor();
@@ -51,7 +52,6 @@ public class PpaassVpnService extends VpnService {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        super.onStartCommand(intent, flags, startId);
         if (this.running) {
             Log.i(PpaassVpnService.class.getName(), "onStartCommand(start already): " + this.id);
             return Service.START_STICKY;

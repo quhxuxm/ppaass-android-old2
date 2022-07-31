@@ -193,7 +193,7 @@ public class TcpConnection implements Runnable {
                             }
                         });
                         //Make remote relay start to work
-                        this.establishLatch.countDown();
+//                        this.establishLatch.countDown();
                         Log.d(TcpConnection.class.getName(),
                                 "Receive ack and remote connection established, current connection: " + this +
                                         ", incoming tcp packet: " + tcpPacket);
@@ -203,6 +203,7 @@ public class TcpConnection implements Runnable {
                         this.writeToRemote(tcpPacket.getData());
                         int dataLength = tcpPacket.getData().length;
                         this.currentAcknowledgementNumber.addAndGet(dataLength);
+//                        this.currentAcknowledgementNumber.getAndIncrement();
                         this.writeAckToDevice();
                         Log.d(TcpConnection.class.getName(),
                                 "Receive ACK - (PSH=" + tcpHeader.isPsh() +

@@ -13,6 +13,7 @@ import com.ppaass.agent.service.handler.udp.IpV4UdpPacketHandler;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
 import java.util.concurrent.Executors;
 
 public class IpPacketHandler {
@@ -32,21 +33,21 @@ public class IpPacketHandler {
     }
 
     public void start() {
-        Executors.newSingleThreadExecutor().execute(new Runnable() {
-            @Override
-            public void run() {
-                while (IpPacketHandler.this.vpnService.isRunning()) {
-                    try {
-                        IpPacket ipPacket = IpPacketHandler.this.read();
-                        if (ipPacket == null) {
-                            Thread.yield();
-                            continue;
+        Executors.newSingleThreadExecutor().execute(() -> {
+            while (IpPacketHandler.this.vpnService.isRunning()) {
+                try {
+                    IpPacket ipPacket = IpPacketHandler.this.read();
+                    if (ipPacket == null) {
+                        synchronized (this) {
+                            this.wait(500);
                         }
-                        IpPacketHandler.this.handle(ipPacket);
-                    } catch (Exception e) {
-                        Log.e(IpPacketHandler.class.getName(),
-                                "Fail to read ip packet from raw input stream because of exception.", e);
+//                        Thread.yield();
+                        continue;
                     }
+                    IpPacketHandler.this.handle(ipPacket);
+                } catch (Exception e) {
+                    Log.e(IpPacketHandler.class.getName(),
+                            "Fail to read ip packet from raw input stream because of exception.", e);
                 }
             }
         });
@@ -95,6 +96,7 @@ public class IpPacketHandler {
 //                        "Nothing to read from raw input stream because of read size: " + size);
                 return null;
             }
+            buffer = Arrays.copyOf(buffer, size);
             return IpPacketReader.INSTANCE.parse(buffer);
         } catch (Exception e) {
             Log.e(IpPacketHandler.class.getName(),
