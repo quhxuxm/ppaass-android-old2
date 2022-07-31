@@ -17,14 +17,12 @@ import java.util.concurrent.Executors;
 
 public class IpV4UdpPacketHandler {
     private final OutputStream rawDeviceOutputStream;
-    private final int writeBufferSize;
     private final VpnService vpnService;
     private final ExecutorService udpThreadPool;
 
-    public IpV4UdpPacketHandler(OutputStream rawDeviceOutputStream, int writeBufferSize, VpnService vpnService)
+    public IpV4UdpPacketHandler(OutputStream rawDeviceOutputStream, VpnService vpnService)
             throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
-        this.writeBufferSize = writeBufferSize;
         this.vpnService = vpnService;
         this.udpThreadPool = Executors.newFixedThreadPool(32);
     }

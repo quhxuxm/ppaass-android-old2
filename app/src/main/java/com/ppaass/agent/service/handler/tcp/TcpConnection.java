@@ -26,19 +26,28 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TcpConnection implements Runnable {
+    private static final AtomicInteger INITIAL_SEQ = new AtomicInteger();
+
+    static {
+        // Set the initial sequence number, which will be used across all tcp connection,
+        // it is increase for each tcp connection
+        Random random = new Random();
+        int nextRandom = Math.abs(random.nextInt());
+        INITIAL_SEQ.set(nextRandom);
+    }
+
     private final AtomicInteger TIMESTAMP = new AtomicInteger();
-    private static final Random RANDOM = new Random();
     private final String id;
     private final TcpConnectionRepositoryKey repositoryKey;
-    private SocketChannel remoteSocketChannel;
+    private final SocketChannel remoteSocketChannel;
     private final TcpIpPacketWriter tcpIpPacketWriter;
     private final BlockingQueue<TcpPacket> deviceInbound;
+    //    private final BlockingQueue<TcpPacket> deviceOutbound;
     private final Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository;
     private final AtomicReference<TcpConnectionStatus> status;
     private final AtomicLong currentSequenceNumber;
     private final AtomicLong currentAcknowledgementNumber;
     private final AtomicLong clientSyncSequenceNumber;
-    private final Runnable remoteRelayToDeviceJob;
     private final CountDownLatch establishLatch;
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpIpPacketWriter tcpIpPacketWriter,
@@ -51,6 +60,7 @@ public class TcpConnection implements Runnable {
         this.currentSequenceNumber = new AtomicLong(0);
         this.clientSyncSequenceNumber = new AtomicLong(0);
         this.deviceInbound = new LinkedBlockingQueue<>();
+//        this.deviceOutbound = new LinkedBlockingQueue<>();
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.connectionRepository = connectionRepository;
         this.establishLatch = new CountDownLatch(1);
@@ -61,163 +71,29 @@ public class TcpConnection implements Runnable {
                     + ", remote socket: " + this.remoteSocketChannel);
             throw new UnsupportedOperationException("Fail to protect vpn tcp socket");
         }
-        this.remoteRelayToDeviceJob = new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    TcpConnection.this.establishLatch.await();
-                } catch (InterruptedException e) {
-                    Log.e(TcpConnection.class.getName(),
-                            "Connection can not relay remote data because of exception, connection:  " + this, e);
-                    TcpConnection.this.status.set(TcpConnectionStatus.CLOSED);
-                    TcpConnection.this.connectionRepository.remove(TcpConnection.this.repositoryKey);
-                    TcpConnection.this.closeRemoteSocket();
-                    return;
-                }
-                Log.d(TcpConnection.class.getName(),
-                        "Connection in establish status, begin to relay remote data to device, current connection: " +
-                                TcpConnection.this);
-                while (TcpConnection.this.status.get() == TcpConnectionStatus.ESTABLISHED ||
-                        TcpConnection.this.status.get() == TcpConnectionStatus.CLOSE_WAIT) {
-                    try {
-                        ByteBuffer remoteDataBuf =
-                                TcpConnection.this.readFromRemote();
-                        if (!remoteDataBuf.hasRemaining()) {
-                            return;
-                        }
-                        while (remoteDataBuf.hasRemaining()) {
-                            int mssDataLength =
-                                    Math.min(IVpnConst.TCP_MSS, remoteDataBuf.remaining());
-                            byte[] mssData = new byte[mssDataLength];
-                            remoteDataBuf.get(mssData);
-                            TcpConnection.this.currentSequenceNumber.addAndGet(mssData.length);
-//                            TcpConnection.this.currentSequenceNumber.incrementAndGet();
-                            Log.d(TcpConnection.class.getName(),
-                                    "Receive remote data write ack to device, current connection: " +
-                                            TcpConnection.this +
-                                            ", remote data size: " + mssData.length + ", remote data:\n\n" +
-                                            new String(mssData) + "\n\n");
-                            TcpConnection.this.writePshAckToDevice(mssData);
-                        }
-                    } catch (Exception e) {
-                        Log.e(TcpConnection.class.getName(),
-                                "Fail to relay device data to remote because of exception, current connection: " +
-                                        TcpConnection.this, e);
-                    }
-                }
-            }
-        };
+//        Executors.newSingleThreadExecutor().execute(() -> {
+//            while (TcpConnection.this.status.get() != TcpConnectionStatus.CLOSED) {
+//                try {
+//                    TcpPacket outboundPacket = TcpConnection.this.deviceOutbound.take();
+//                    TcpConnection.this.tcpIpPacketWriter.write(TcpConnection.this, outboundPacket);
+//                    Log.d(TcpConnection.class.getName(),
+//                            "Write tcp packet to device, current connection: " + TcpConnection.this + ", tcp packet: " +
+//                                    outboundPacket);
+//                } catch (InterruptedException | IOException e) {
+//                    Log.e(TcpConnection.class.getName(),
+//                            "Fail to get tcp packet from outbound queue because of exception, current connection: " +
+//                                    TcpConnection.this, e);
+//                }
+//            }
+//        });
     }
 
-    private int generateRandomNumber() {
-        int result = RANDOM.nextInt();
-        if (result < 0) {
-            return result * (-1);
-        }
-        return result;
+    private int generateInitialSequenceNumber() {
+        return INITIAL_SEQ.getAndIncrement();
     }
 
-    private void writeSyncAckToDevice() throws Exception {
-        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
-        tcpPacketBuilder.ack(true);
-        tcpPacketBuilder.syn(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket syncAckTcpPacket = tcpPacketBuilder.build();
-        this.tcpIpPacketWriter.write(this, syncAckTcpPacket);
-    }
-
-    private void writeAckToDevice() throws Exception {
-        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
-        tcpPacketBuilder.ack(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
-        this.tcpIpPacketWriter.write(this, ackTcpPacket);
-    }
-
-    private void writePshAckToDevice(byte[] ackData) throws Exception {
-        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
-        tcpPacketBuilder.ack(true);
-        tcpPacketBuilder.psh(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.data(ackData);
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
-        this.tcpIpPacketWriter.write(this, ackTcpPacket);
-    }
-
-    private void writeFinAckToDevice() throws Exception {
-        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
-        tcpPacketBuilder.ack(true);
-        tcpPacketBuilder.fin(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
-        this.tcpIpPacketWriter.write(this, ackTcpPacket);
-    }
-
-    private void writeFinToDevice() throws Exception {
-        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
-        tcpPacketBuilder.fin(true);
-        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
-        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
-        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
-        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
-        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
-        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
-        timestampByteBuffer.putInt(timestamp);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
-        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
-        this.tcpIpPacketWriter.write(this, ackTcpPacket);
-    }
-
-    private boolean connectRemote() throws Exception {
-        return this.remoteSocketChannel.connect(
+    private void connectRemote() throws Exception {
+        this.remoteSocketChannel.connect(
                 new InetSocketAddress(InetAddress.getByAddress(this.repositoryKey.getDestinationAddress()),
                         this.repositoryKey.getDestinationPort()));
     }
@@ -237,11 +113,14 @@ public class TcpConnection implements Runnable {
                 TcpHeader tcpHeader = tcpPacket.getHeader();
                 if (tcpHeader.isSyn()) {
                     if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
+                        Log.e(TcpConnection.class.getName(),
+                                "Receive duplicate sync tcp packet, current connection: " + this +
+                                        ", incoming tcp packet: " + tcpPacket);
                         continue;
                     }
                     //Initialize ack number and seq number
                     this.currentAcknowledgementNumber.set(tcpHeader.getSequenceNumber() + 1);
-                    this.currentSequenceNumber.set(this.generateRandomNumber());
+                    this.currentSequenceNumber.set(this.generateInitialSequenceNumber());
                     this.clientSyncSequenceNumber.set(tcpHeader.getSequenceNumber());
                     this.status.set(TcpConnectionStatus.SYNC_RCVD);
                     this.writeSyncAckToDevice();
@@ -261,10 +140,59 @@ public class TcpConnection implements Runnable {
                                             ", incoming tcp packet: " + tcpPacket);
                             return;
                         }
-                        this.currentSequenceNumber.incrementAndGet();
                         this.connectRemote();
+                        this.currentSequenceNumber.getAndIncrement();
                         this.status.set(TcpConnectionStatus.ESTABLISHED);
-                        Executors.newSingleThreadExecutor().execute(this.remoteRelayToDeviceJob);
+                        //Start remote relay task
+                        Executors.newSingleThreadExecutor().execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    TcpConnection.this.establishLatch.await();
+                                } catch (InterruptedException e) {
+                                    Log.e(TcpConnection.class.getName(),
+                                            "Connection can not relay remote data because of exception, connection:  " +
+                                                    this, e);
+                                    TcpConnection.this.status.set(TcpConnectionStatus.CLOSED);
+                                    TcpConnection.this.connectionRepository.remove(TcpConnection.this.repositoryKey);
+                                    TcpConnection.this.closeRemoteSocket();
+                                    return;
+                                }
+                                Log.d(TcpConnection.class.getName(),
+                                        "Connection in establish status, begin to relay remote data to device, current connection: " +
+                                                TcpConnection.this);
+                                while (TcpConnection.this.status.get() == TcpConnectionStatus.ESTABLISHED ||
+                                        TcpConnection.this.status.get() == TcpConnectionStatus.CLOSE_WAIT) {
+                                    try {
+                                        ByteBuffer remoteDataBuf =
+                                                TcpConnection.this.readFromRemote();
+                                        if (!remoteDataBuf.hasRemaining()) {
+                                            return;
+                                        }
+                                        //Relay remote data to device and use mss as the transfer unit
+                                        while (remoteDataBuf.hasRemaining()) {
+                                            int mssDataLength =
+                                                    Math.min(IVpnConst.TCP_MSS, remoteDataBuf.remaining());
+                                            byte[] mssData = new byte[mssDataLength];
+                                            remoteDataBuf.get(mssData);
+                                            TcpConnection.this.currentSequenceNumber.addAndGet(mssData.length);
+                                            Log.d(TcpConnection.class.getName(),
+                                                    "Receive remote data write ack to device, current connection: " +
+                                                            TcpConnection.this +
+                                                            ", remote data size: " + mssData.length +
+                                                            ", remote data:\n\n" +
+                                                            new String(mssData) + "\n\n");
+                                            TcpConnection.this.writePshAckToDevice(mssData);
+                                        }
+                                    } catch (Exception e) {
+                                        Log.e(TcpConnection.class.getName(),
+                                                "Fail to relay device data to remote because of exception, current connection: " +
+                                                        TcpConnection.this, e);
+                                    }
+                                }
+                            }
+                        });
+                        //Make remote relay start to work
                         this.establishLatch.countDown();
                         Log.d(TcpConnection.class.getName(),
                                 "Receive ack and remote connection established, current connection: " + this +
@@ -275,10 +203,9 @@ public class TcpConnection implements Runnable {
                         this.writeToRemote(tcpPacket.getData());
                         int dataLength = tcpPacket.getData().length;
                         this.currentAcknowledgementNumber.addAndGet(dataLength);
-//                        this.currentAcknowledgementNumber.incrementAndGet();
                         this.writeAckToDevice();
                         Log.d(TcpConnection.class.getName(),
-                                "Receive ACK(PSH=" + tcpHeader.isPsh() +
+                                "Receive ACK - (PSH=" + tcpHeader.isPsh() +
                                         ") and write device data to remote, current connection:  " + this +
                                         ", incoming tcp packet: " + tcpPacket + " , device data size: " +
                                         tcpPacket.getData().length + ", write data: \n\n" +
@@ -379,6 +306,110 @@ public class TcpConnection implements Runnable {
         } catch (IOException e) {
             Log.e(TcpConnection.class.getName(), "Exception happen when close remote socket.", e);
         }
+    }
+
+    private void writeSyncAckToDevice() throws Exception {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.syn(true);
+        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
+        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
+        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
+        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
+        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
+        int timestamp = TIMESTAMP.getAndIncrement();
+        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
+        timestampByteBuffer.putInt(timestamp);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
+        TcpPacket syncAckTcpPacket = tcpPacketBuilder.build();
+        this.tcpIpPacketWriter.write(this, syncAckTcpPacket);
+//        this.deviceOutbound.put(syncAckTcpPacket);
+    }
+
+    private void writeAckToDevice() throws Exception {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
+        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
+        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
+        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
+        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
+        int timestamp = TIMESTAMP.getAndIncrement();
+        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
+        timestampByteBuffer.putInt(timestamp);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
+        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        this.tcpIpPacketWriter.write(this, ackTcpPacket);
+//        this.deviceOutbound.put(ackTcpPacket);
+    }
+
+    private void writePshAckToDevice(byte[] ackData) throws Exception {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.psh(true);
+        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
+        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
+        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
+        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
+        tcpPacketBuilder.data(ackData);
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
+        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
+        int timestamp = TIMESTAMP.getAndIncrement();
+        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
+        timestampByteBuffer.putInt(timestamp);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
+        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        this.tcpIpPacketWriter.write(this, ackTcpPacket);
+//        this.deviceOutbound.put(ackTcpPacket);
+    }
+
+    private void writeFinAckToDevice() throws Exception {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.fin(true);
+        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
+        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
+        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
+        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
+        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
+        int timestamp = TIMESTAMP.getAndIncrement();
+        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
+        timestampByteBuffer.putInt(timestamp);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
+        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        this.tcpIpPacketWriter.write(this, ackTcpPacket);
+//        this.deviceOutbound.put(ackTcpPacket);
+    }
+
+    private void writeFinToDevice() throws Exception {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.fin(true);
+        tcpPacketBuilder.destinationPort(this.repositoryKey.getSourcePort());
+        tcpPacketBuilder.sourcePort(this.repositoryKey.getDestinationPort());
+        tcpPacketBuilder.sequenceNumber(this.currentSequenceNumber.get());
+        tcpPacketBuilder.acknowledgementNumber(this.currentAcknowledgementNumber.get());
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
+        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
+        int timestamp = TIMESTAMP.getAndIncrement();
+        ByteBuffer timestampByteBuffer = ByteBuffer.allocate(4);
+        timestampByteBuffer.putInt(timestamp);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampByteBuffer.array()));
+        TcpPacket ackTcpPacket = tcpPacketBuilder.build();
+        this.tcpIpPacketWriter.write(this, ackTcpPacket);
+//        this.deviceOutbound.put(ackTcpPacket);
     }
 
     @Override

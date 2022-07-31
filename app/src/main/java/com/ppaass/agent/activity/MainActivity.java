@@ -33,6 +33,11 @@ public class MainActivity extends AppCompatActivity {
             Intent intent = new Intent(this, PpaassVpnService.class);
             stopService(intent);
         });
+        Button callNativeButton = this.findViewById(R.id.callNative);
+        callNativeButton.setOnClickListener(view -> {
+            String result = JniTest.getStringFromNDK();
+            Log.d("JNITEST", result);
+        });
     }
 
     @Override

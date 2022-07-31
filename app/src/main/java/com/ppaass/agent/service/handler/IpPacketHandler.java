@@ -23,12 +23,12 @@ public class IpPacketHandler {
     private final PpaassVpnService vpnService;
 
     public IpPacketHandler(InputStream rawDeviceInputStream, OutputStream rawDeviceOutputStream, int readBufferSize,
-                           int writeBufferSize, PpaassVpnService vpnService) throws Exception {
+                           PpaassVpnService vpnService) throws Exception {
         this.rawDeviceInputStream = rawDeviceInputStream;
         this.readBufferSize = readBufferSize;
         this.vpnService = vpnService;
-        this.ipV4TcpPacketHandler = new IpV4TcpPacketHandler(rawDeviceOutputStream, writeBufferSize, vpnService);
-        this.ipV4UdpPacketHandler = new IpV4UdpPacketHandler(rawDeviceOutputStream, writeBufferSize, vpnService);
+        this.ipV4TcpPacketHandler = new IpV4TcpPacketHandler(rawDeviceOutputStream, vpnService);
+        this.ipV4UdpPacketHandler = new IpV4UdpPacketHandler(rawDeviceOutputStream, vpnService);
     }
 
     public void start() {
@@ -39,9 +39,7 @@ public class IpPacketHandler {
                     try {
                         IpPacket ipPacket = IpPacketHandler.this.read();
                         if (ipPacket == null) {
-                            synchronized (this){
-                                this.wait(500);
-                            }
+                            Thread.yield();
                             continue;
                         }
                         IpPacketHandler.this.handle(ipPacket);

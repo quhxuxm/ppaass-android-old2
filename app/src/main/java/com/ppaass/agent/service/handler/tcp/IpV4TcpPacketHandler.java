@@ -17,14 +17,12 @@ import java.util.concurrent.Executors;
 
 public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
     private final OutputStream rawDeviceOutputStream;
-    private final int writeBufferSize;
     private final Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository;
     private final VpnService vpnService;
     private final ExecutorService connectionThreadPool;
 
-    public IpV4TcpPacketHandler(OutputStream rawDeviceOutputStream, int writeBufferSize, VpnService vpnService) {
+    public IpV4TcpPacketHandler(OutputStream rawDeviceOutputStream, VpnService vpnService) {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
-        this.writeBufferSize = writeBufferSize;
         this.vpnService = vpnService;
         this.connectionRepository = new ConcurrentHashMap<>();
         this.connectionThreadPool = Executors.newFixedThreadPool(128);
@@ -52,6 +50,9 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
             this.connectionThreadPool.execute(result);
             return result;
         });
+        if (tcpConnection == null) {
+            return;
+        }
         try {
             tcpConnection.onDeviceInbound(tcpPacket);
         } catch (Exception e) {
