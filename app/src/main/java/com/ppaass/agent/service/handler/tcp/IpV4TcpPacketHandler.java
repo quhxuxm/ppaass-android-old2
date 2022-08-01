@@ -27,11 +27,11 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         this.connectionThreadPool = Executors.newFixedThreadPool(128);
     }
 
-    private TcpConnection getOrCreate(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket)
+    private TcpConnection retrieveTcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket)
             throws IOException {
         TcpConnection tcpConnection = this.connectionRepository.get(repositoryKey);
         if (tcpConnection != null) {
-            Log.d(IpV4TcpPacketHandler.class.getName(),
+            Log.v(IpV4TcpPacketHandler.class.getName(),
                     "Get existing tcp connection: " + tcpConnection + ", tcp packet: " + tcpPacket);
             return tcpConnection;
         }
@@ -54,8 +54,8 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         byte[] destinationAddress = ipV4Header.getDestinationAddress();
         TcpConnectionRepositoryKey tcpConnectionRepositoryKey =
                 new TcpConnectionRepositoryKey(sourcePort, destinationPort, sourceAddress, destinationAddress);
-        TcpConnection tcpConnection = this.getOrCreate(tcpConnectionRepositoryKey, tcpPacket);
-        Log.d(IpV4TcpPacketHandler.class.getName(),
+        TcpConnection tcpConnection = this.retrieveTcpConnection(tcpConnectionRepositoryKey, tcpPacket);
+        Log.v(IpV4TcpPacketHandler.class.getName(),
                 "Do inbound for tcp connection: " + tcpConnection + ", incoming tcp packet: " + tcpPacket +
                         ", ip header: " +
                         ipV4Header);
@@ -71,6 +71,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         ipV4HeaderBuilder.destinationAddress(tcpConnection.getRepositoryKey().getSourceAddress());
         ipV4HeaderBuilder.sourceAddress(tcpConnection.getRepositoryKey().getDestinationAddress());
         ipV4HeaderBuilder.protocol(IpDataProtocol.TCP);
+        ipV4HeaderBuilder.ttl(64);
         ipPacketBuilder.header(ipV4HeaderBuilder.build());
         ipPacketBuilder.data(tcpPacket);
         IpPacket ipPacket = ipPacketBuilder.build();

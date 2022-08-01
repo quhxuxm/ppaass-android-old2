@@ -33,15 +33,13 @@ public class IpPacketHandler {
     }
 
     public void start() {
+        this.ipV4UdpPacketHandler.start();
         Executors.newSingleThreadExecutor().execute(() -> {
             while (IpPacketHandler.this.vpnService.isRunning()) {
                 try {
                     IpPacket ipPacket = IpPacketHandler.this.read();
                     if (ipPacket == null) {
-                        synchronized (this) {
-                            this.wait(500);
-                        }
-//                        Thread.yield();
+                        Thread.yield();
                         continue;
                     }
                     IpPacketHandler.this.handle(ipPacket);
@@ -50,6 +48,7 @@ public class IpPacketHandler {
                             "Fail to read ip packet from raw input stream because of exception.", e);
                 }
             }
+            IpPacketHandler.this.ipV4UdpPacketHandler.stop();
         });
     }
 
@@ -91,9 +90,9 @@ public class IpPacketHandler {
         byte[] buffer = new byte[this.readBufferSize];
         try {
             int size = this.rawDeviceInputStream.read(buffer);
-            if (size < 0) {
-//                Log.d(IpPacketHandler.class.getName(),
-//                        "Nothing to read from raw input stream because of read size: " + size);
+            if (size <= 0) {
+                Log.d(IpPacketHandler.class.getName(),
+                        "Nothing to read from raw input stream because of read size: " + size);
                 return null;
             }
             buffer = Arrays.copyOf(buffer, size);
