@@ -43,7 +43,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         }
         synchronized (this.connectionRepository) {
             tcpConnection = new TcpConnection(repositoryKey, this, connectionRepository,
-                    IpV4TcpPacketHandler.this.vpnService);
+                    IpV4TcpPacketHandler.this.vpnService, 2000, 2000);
             tcpConnection.start();
             this.connectionRepository.put(repositoryKey, tcpConnection);
             this.connectionThreadPool.execute(tcpConnection);

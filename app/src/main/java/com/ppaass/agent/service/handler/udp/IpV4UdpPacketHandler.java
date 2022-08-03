@@ -62,12 +62,11 @@ public class IpV4UdpPacketHandler {
                             int destinationPort = udpPacket.getHeader().getDestinationPort();
                             InetSocketAddress deviceToRemoteDestinationAddress =
                                     new InetSocketAddress(destinationAddress, destinationPort);
-                            deviceToRemoteChannel.socket().setSoTimeout(20000);
+                            deviceToRemoteChannel.socket().setSoTimeout(2000);
                             Log.d(IpV4UdpPacketHandler.class.getName(),
                                     "Begin to send udp packet to remote: " + udpPacket + ", destination: " +
-                                            deviceToRemoteDestinationAddress);
-                            Log.d(IpV4UdpPacketHandler.class.getName(),
-                                    "Udp content going to send:\n\n" + Hex.encodeHexString(udpPacket.getData()) +
+                                            deviceToRemoteDestinationAddress + ", udp content going to send:\n\n" +
+                                            Hex.encodeHexString(udpPacket.getData()) +
                                             "\n\n");
                             deviceToRemoteChannel.connect(deviceToRemoteDestinationAddress);
                             deviceToRemoteChannel.write(ByteBuffer.wrap(udpPacket.getData()));
@@ -84,10 +83,9 @@ public class IpV4UdpPacketHandler {
                             remoteToDeviceUdpPacketBuilder.sourcePort(udpPacket.getHeader().getDestinationPort());
                             UdpPacket remoteToDeviceUdpPacket = remoteToDeviceUdpPacketBuilder.build();
                             Log.d(IpV4UdpPacketHandler.class.getName(),
-                                    "Success receive remote udp packet: " + remoteToDeviceUdpPacket);
-                            Log.d(IpV4UdpPacketHandler.class.getName(),
-                                    "Udp content received:\n\n" + Hex.encodeHexString(packetFromRemoteToDeviceContent) +
-                                            "\n\n");
+                                    "Success receive remote udp packet, destination: " +
+                                            deviceToRemoteDestinationAddress + ", udp content received:\n\n" +
+                                            Hex.encodeHexString(packetFromRemoteToDeviceContent) + "\n\n");
                             IpPacketBuilder ipPacketBuilder = new IpPacketBuilder();
                             ipPacketBuilder.data(remoteToDeviceUdpPacket);
                             IpV4HeaderBuilder ipV4HeaderBuilder = new IpV4HeaderBuilder();
