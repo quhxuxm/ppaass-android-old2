@@ -1,5 +1,6 @@
 package com.ppaass.agent.protocol.general.ip;
 
+import com.ppaass.agent.protocol.general.icmp.IcmpPacket;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
 
@@ -33,6 +34,11 @@ public class IpPacketBuilder {
             header.setTotalLength(header.getInternetHeaderLength() * 4 + udpPacket.getHeader().getTotalLength());
             return new IpPacket(header, udpPacket);
         }
-        return new IpPacket(this.header, null);
+        if (IpDataProtocol.ICMP == header.getProtocol()) {
+            IcmpPacket icmpPacket = (IcmpPacket) this.data;
+            header.setTotalLength(header.getInternetHeaderLength() * 4 + icmpPacket.getTotalLength());
+            return new IpPacket(header, icmpPacket);
+        }
+        throw new IllegalStateException("Illegal protocol found in ip packet.");
     }
 }

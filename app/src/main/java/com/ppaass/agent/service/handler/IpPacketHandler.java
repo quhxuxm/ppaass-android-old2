@@ -1,6 +1,7 @@
 package com.ppaass.agent.service.handler;
 
 import android.util.Log;
+import com.ppaass.agent.protocol.general.icmp.IcmpPacket;
 import com.ppaass.agent.protocol.general.ip.IIpHeader;
 import com.ppaass.agent.protocol.general.ip.IpPacket;
 import com.ppaass.agent.protocol.general.ip.IpPacketReader;
@@ -8,6 +9,7 @@ import com.ppaass.agent.protocol.general.ip.IpV4Header;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
 import com.ppaass.agent.service.PpaassVpnService;
+import com.ppaass.agent.service.handler.icmp.IpV4IcmpPacketHandler;
 import com.ppaass.agent.service.handler.tcp.IpV4TcpPacketHandler;
 import com.ppaass.agent.service.handler.udp.IpV4UdpPacketHandler;
 
@@ -21,6 +23,7 @@ public class IpPacketHandler {
     private final int readBufferSize;
     private final IpV4TcpPacketHandler ipV4TcpPacketHandler;
     private final IpV4UdpPacketHandler ipV4UdpPacketHandler;
+    private final IpV4IcmpPacketHandler ipV4IcmpPacketHandler;
     private final PpaassVpnService vpnService;
 
     public IpPacketHandler(InputStream rawDeviceInputStream, OutputStream rawDeviceOutputStream, int readBufferSize,
@@ -30,6 +33,7 @@ public class IpPacketHandler {
         this.vpnService = vpnService;
         this.ipV4TcpPacketHandler = new IpV4TcpPacketHandler(rawDeviceOutputStream, vpnService);
         this.ipV4UdpPacketHandler = new IpV4UdpPacketHandler(rawDeviceOutputStream, vpnService);
+        this.ipV4IcmpPacketHandler = new IpV4IcmpPacketHandler();
     }
 
     public void start() {
@@ -68,9 +72,14 @@ public class IpPacketHandler {
                         this.ipV4UdpPacketHandler.handle(udpPacket, ipV4Header);
                         break;
                     }
+                    case ICMP: {
+                        IcmpPacket<?> icmpPacket = (IcmpPacket<?>) element.getData();
+                        this.ipV4IcmpPacketHandler.handle(icmpPacket, ipV4Header);
+                        break;
+                    }
                     default: {
-//                        Log.e(IpPacketHandler.class.getName(),
-//                                "Ignore unsupported protocol: " + ipV4Header.getProtocol());
+                        Log.e(IpPacketHandler.class.getName(),
+                                "Ignore unsupported protocol: " + ipV4Header.getProtocol());
                         break;
                     }
                 }

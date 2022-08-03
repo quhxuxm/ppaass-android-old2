@@ -1,9 +1,9 @@
 package com.ppaass.agent.protocol.general.ip;
 
+import com.ppaass.agent.protocol.general.IProtocolConst;
 import com.ppaass.agent.protocol.general.icmp.IcmpPacketReader;
 import com.ppaass.agent.protocol.general.tcp.TcpPacketReader;
 import com.ppaass.agent.protocol.general.udp.UdpPacketReader;
-import com.ppaass.agent.protocol.general.IProtocolConst;
 
 import java.nio.ByteBuffer;
 
@@ -80,7 +80,10 @@ public class IpPacketReader {
             ipPacketBuilder.data(UdpPacketReader.INSTANCE.parse(dataBytes));
             return ipPacketBuilder.build();
         }
-        ipPacketBuilder.data(IcmpPacketReader.INSTANCE.parse(dataBytes));
-        return ipPacketBuilder.build();
+        if (IpDataProtocol.ICMP == protocol) {
+            ipPacketBuilder.data(IcmpPacketReader.INSTANCE.parse(dataBytes));
+            return ipPacketBuilder.build();
+        }
+        throw new IllegalStateException("Illegal protocol found in ip packet.");
     }
 }

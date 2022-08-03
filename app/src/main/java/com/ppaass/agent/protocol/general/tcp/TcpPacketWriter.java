@@ -22,15 +22,25 @@ public class TcpPacketWriter {
         return 0;
     }
 
-    public ByteBuffer write(TcpPacket packet, IpV4Header ipHeader) {
+    private ByteBuffer generateFakeHeader(TcpPacket tcpPacket, IpV4Header ipV4Header) {
         ByteBuffer tcpFakeHeaderBytes = ByteBuffer.allocateDirect(FAKE_HEADER_LENGTH);
         tcpFakeHeaderBytes.order(ByteOrder.BIG_ENDIAN);
-        tcpFakeHeaderBytes.put(ipHeader.getSourceAddress());
-        tcpFakeHeaderBytes.put(ipHeader.getDestinationAddress());
+        tcpFakeHeaderBytes.put(ipV4Header.getSourceAddress());
+        tcpFakeHeaderBytes.put(ipV4Header.getDestinationAddress());
         tcpFakeHeaderBytes.put((byte) 0);
         tcpFakeHeaderBytes.put((byte) IpDataProtocol.TCP.getValue());
-        tcpFakeHeaderBytes.putShort((short) ((packet.getHeader().getOffset() * 4 + packet.getData().length) & 0xFFFF));
+        tcpFakeHeaderBytes.putShort(
+                (short) ((tcpPacket.getHeader().getOffset() * 4 + tcpPacket.getData().length) & 0xFFFF));
         tcpFakeHeaderBytes.flip();
+        return tcpFakeHeaderBytes;
+    }
+
+    public ByteBuffer generateFakeHeader(TcpPacket tcpPacket, IpV6Header ipV6Header) {
+        throw new UnsupportedOperationException("Do not support IPv6");
+    }
+
+    public ByteBuffer write(TcpPacket packet, IpV4Header ipHeader) {
+        ByteBuffer tcpFakeHeaderBytes = this.generateFakeHeader(packet, ipHeader);
         ByteBuffer byteBufferForChecksum =
                 ByteBuffer.allocateDirect(
                         packet.getHeader().getOffset() * 4 + FAKE_HEADER_LENGTH + packet.getData().length);
