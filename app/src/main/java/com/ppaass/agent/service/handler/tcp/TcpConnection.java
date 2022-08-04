@@ -141,7 +141,7 @@ public class TcpConnection implements Runnable {
                     this.writeRstToDevice();
                     this.finallyCloseTcpConnection();
                     Log.e(TcpConnection.class.getName(),
-                            "<<<<---- Read remote data fail, current connection:  " + TcpConnection.this);
+                            "<<<<---- Read remote data fail, current connection:  " + TcpConnection.this, e);
                     return;
                 }
                 if (!remoteDataBuf.hasRemaining()) {
@@ -156,6 +156,7 @@ public class TcpConnection implements Runnable {
                     }
                     if (TcpConnection.this.status.get() == TcpConnectionStatus.CLOSE_WAIT) {
                         TcpConnection.this.writeFinAckToDevice();
+                        TcpConnection.this.status.set(TcpConnectionStatus.LAST_ACK);
                         TcpConnection.this.currentSequenceNumber.incrementAndGet();
                         return;
                     }
@@ -220,17 +221,25 @@ public class TcpConnection implements Runnable {
             try {
                 tcpPacket = this.deviceInbound.poll(this.readFromDeviceTimeout, TimeUnit.MILLISECONDS);
             } catch (Exception e) {
+                Log.e(TcpConnection.class.getName(),
+                        ">>>>>>>> Fail to take tcp packet from inbound queue (error begin), current connection: " +
+                                this, e);
                 this.writeRstToDevice();
                 this.finallyCloseTcpConnection();
                 Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Fail to take tcp packet from inbound queue, current connection: " + this, e);
+                        ">>>>>>>> Fail to take tcp packet from inbound queue (error complete), current connection: " +
+                                this, e);
                 return;
             }
             if (tcpPacket == null) {
                 this.writeRstToDevice();
+                Log.e(TcpConnection.class.getName(),
+                        ">>>>>>>> Fail to take tcp packet from inbound queue because of timeout(begin), current connection: " +
+                                this);
                 this.finallyCloseTcpConnection();
                 Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Fail to take tcp packet from inbound queue because of timeout, current connection: " + this);
+                        ">>>>>>>> Fail to take tcp packet from inbound queue because of timeout(complete), current connection: " +
+                                this);
                 return;
             }
             TcpHeader tcpHeader = tcpPacket.getHeader();
@@ -342,11 +351,11 @@ public class TcpConnection implements Runnable {
                                     this.printTcpPacket(tcpPacket));
                     return;
                 }
-                this.writeRstToDevice();
-                this.finallyCloseTcpConnection();
                 Log.e(TcpConnection.class.getName(),
                         ">>>>>>>> Incorrect connection status going to close connection, current connection: " + this +
                                 ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                this.writeRstToDevice();
+                this.finallyCloseTcpConnection();
                 return;
             }
             if (tcpHeader.isFin()) {
