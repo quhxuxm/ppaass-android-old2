@@ -12,15 +12,16 @@ import com.ppaass.agent.service.handler.TcpIpPacketWriter;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
     private static final Random RANDOM = new Random();
     private final OutputStream rawDeviceOutputStream;
-    private final HashMap<TcpConnectionRepositoryKey, TcpConnection> connectionRepository;
+    private final Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository;
     private final VpnService vpnService;
     private final ExecutorService connectionThreadPool;
     private int ipIdentifier;
@@ -28,29 +29,28 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
     public IpV4TcpPacketHandler(OutputStream rawDeviceOutputStream, VpnService vpnService) {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
-        this.connectionRepository = new HashMap<>();
+        this.connectionRepository = new ConcurrentHashMap<>();
         this.connectionThreadPool = Executors.newFixedThreadPool(128);
         this.ipIdentifier = RANDOM.nextInt(Short.MAX_VALUE * 2 + 2);
     }
 
-    private TcpConnection retrieveTcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket)
-            throws IOException {
-        TcpConnection tcpConnection = this.connectionRepository.get(repositoryKey);
-        if (tcpConnection != null) {
-            Log.v(IpV4TcpPacketHandler.class.getName(),
-                    ">>>>>>>> Get existing tcp connection: " + tcpConnection + ", tcp packet: " + tcpPacket);
-            return tcpConnection;
-        }
-        synchronized (this.connectionRepository) {
-            tcpConnection = new TcpConnection(repositoryKey, this, connectionRepository,
-                    IpV4TcpPacketHandler.this.vpnService, 2000, 2000);
-            tcpConnection.start();
-            this.connectionRepository.put(repositoryKey, tcpConnection);
-            this.connectionThreadPool.execute(tcpConnection);
+    private TcpConnection retrieveTcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket) {
+        return this.connectionRepository.computeIfAbsent(repositoryKey, key -> {
+            TcpConnection result = null;
+            try {
+                result = new TcpConnection(repositoryKey, this, connectionRepository,
+                        IpV4TcpPacketHandler.this.vpnService, 120000, 2000);
+            } catch (IOException e) {
+                Log.e(IpV4TcpPacketHandler.class.getName(),
+                        ">>>>>>>> Fail to create tcp connection: " + result + ", tcp packet: " + tcpPacket, e);
+                throw new IllegalStateException("Fail to create tcp connection.", e);
+            }
+            result.start();
+            this.connectionThreadPool.execute(result);
             Log.d(IpV4TcpPacketHandler.class.getName(),
-                    ">>>>>>>> Create tcp connection: " + tcpConnection + ", tcp packet: " + tcpPacket);
-        }
-        return tcpConnection;
+                    ">>>>>>>> Create tcp connection: " + result + ", tcp packet: " + tcpPacket);
+            return result;
+        });
     }
 
     private int generateChecksumToVerify(TcpPacket tcpPacket, IpV4Header ipV4Header) {
@@ -79,11 +79,11 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         TcpConnectionRepositoryKey tcpConnectionRepositoryKey =
                 new TcpConnectionRepositoryKey(sourcePort, destinationPort, sourceAddress, destinationAddress);
         TcpConnection tcpConnection = this.retrieveTcpConnection(tcpConnectionRepositoryKey, tcpPacket);
+        tcpConnection.onDeviceInbound(tcpPacket);
         Log.v(IpV4TcpPacketHandler.class.getName(),
                 ">>>>>>>> Do inbound for tcp connection: " + tcpConnection + ", incoming tcp packet: " + tcpPacket +
                         ", ip header: " +
                         ipV4Header);
-        tcpConnection.onDeviceInbound(tcpPacket);
     }
 
     @Override
