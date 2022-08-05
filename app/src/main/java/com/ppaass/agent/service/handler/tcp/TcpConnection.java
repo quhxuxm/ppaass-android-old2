@@ -338,11 +338,11 @@ public class TcpConnection implements Runnable {
                     try {
                         this.connectRemote();
                     } catch (Exception e) {
+                        this.writeRstToDevice();
+                        this.finallyCloseTcpConnection();
                         Log.e(TcpConnection.class.getName(),
                                 ">>>>>>>> Connect to remote fail, current connection:  " + this +
                                         ", incoming tcp packet: " + this.printTcpPacket(tcpPacket), e);
-                        this.writeRstToDevice();
-                        this.finallyCloseTcpConnection();
                         return;
                     }
                     this.currentSequenceNumber.getAndIncrement();
@@ -423,6 +423,10 @@ public class TcpConnection implements Runnable {
                 //Receive Fin on established status.
                 if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
                     //After fin, no more device data will be sent to vpn
+                    Log.d(TcpConnection.class.getName(),
+                            ">>>>>>>> Receive fin when connection ESTABLISHED, current connection: " +
+                                    this +
+                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                     this.status.set(TcpConnectionStatus.CLOSED_WAIT);
                     this.currentAcknowledgementNumber.incrementAndGet();
                     this.writeAckToDevice(null, this.countDeviceReceiveBufRemainingSpace());
