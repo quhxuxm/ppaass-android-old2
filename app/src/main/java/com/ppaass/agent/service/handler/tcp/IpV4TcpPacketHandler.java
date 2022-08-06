@@ -30,7 +30,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
         this.connectionRepository = new ConcurrentHashMap<>();
-        this.connectionThreadPool = Executors.newFixedThreadPool(128);
+        this.connectionThreadPool = Executors.newFixedThreadPool(256);
         this.ipIdentifier = RANDOM.nextInt(Short.MAX_VALUE * 2 + 2);
     }
 
@@ -39,7 +39,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
             TcpConnection result = null;
             try {
                 result = new TcpConnection(repositoryKey, this, connectionRepository,
-                        IpV4TcpPacketHandler.this.vpnService, 120000, 2000);
+                        IpV4TcpPacketHandler.this.vpnService, this.connectionThreadPool, 120000, 120000);
             } catch (IOException e) {
                 Log.e(IpV4TcpPacketHandler.class.getName(),
                         ">>>>>>>> Fail to create tcp connection: " + result + ", tcp packet: " + tcpPacket, e);
@@ -88,27 +88,27 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
 
     @Override
     public void write(TcpConnection tcpConnection, TcpPacket tcpPacket) throws IOException {
+        IpPacketBuilder ipPacketBuilder = new IpPacketBuilder();
+        IpV4HeaderBuilder ipV4HeaderBuilder = new IpV4HeaderBuilder();
+        int identification = this.ipIdentifier;
+        this.ipIdentifier++;
+        ipV4HeaderBuilder.identification(identification);
+        ipV4HeaderBuilder.destinationAddress(tcpConnection.getRepositoryKey().getSourceAddress());
+        ipV4HeaderBuilder.sourceAddress(tcpConnection.getRepositoryKey().getDestinationAddress());
+        ipV4HeaderBuilder.protocol(IpDataProtocol.TCP);
+        ipV4HeaderBuilder.ttl(64);
+        ipV4HeaderBuilder.flags(new IpFlags(false, false));
+        ipPacketBuilder.header(ipV4HeaderBuilder.build());
+        ipPacketBuilder.data(tcpPacket);
+        IpPacket ipPacket = ipPacketBuilder.build();
+        ByteBuffer ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
+        Log.v(IpV4TcpPacketHandler.class.getName(),
+                "<<<<<<<< Write ip packet to device, current connection:  " + tcpConnection +
+                        ", output ip packet: " + ipPacket);
+        byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
+        ipPacketBytes.get(bytesWriteToDevice);
+        ipPacketBytes.clear();
         synchronized (this.rawDeviceOutputStream) {
-            IpPacketBuilder ipPacketBuilder = new IpPacketBuilder();
-            IpV4HeaderBuilder ipV4HeaderBuilder = new IpV4HeaderBuilder();
-            int identification = this.ipIdentifier;
-            this.ipIdentifier++;
-            ipV4HeaderBuilder.identification(identification);
-            ipV4HeaderBuilder.destinationAddress(tcpConnection.getRepositoryKey().getSourceAddress());
-            ipV4HeaderBuilder.sourceAddress(tcpConnection.getRepositoryKey().getDestinationAddress());
-            ipV4HeaderBuilder.protocol(IpDataProtocol.TCP);
-            ipV4HeaderBuilder.ttl(64);
-            ipV4HeaderBuilder.flags(new IpFlags(false, false));
-            ipPacketBuilder.header(ipV4HeaderBuilder.build());
-            ipPacketBuilder.data(tcpPacket);
-            IpPacket ipPacket = ipPacketBuilder.build();
-            ByteBuffer ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
-            Log.v(IpV4TcpPacketHandler.class.getName(),
-                    "<<<<<<<< Write ip packet to device, current connection:  " + tcpConnection +
-                            ", output ip packet: " + ipPacket);
-            byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
-            ipPacketBytes.get(bytesWriteToDevice);
-            ipPacketBytes.clear();
             this.rawDeviceOutputStream.write(bytesWriteToDevice);
             this.rawDeviceOutputStream.flush();
         }

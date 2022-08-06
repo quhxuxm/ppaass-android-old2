@@ -60,6 +60,7 @@ public class TcpConnection implements Runnable {
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpIpPacketWriter tcpIpPacketWriter,
                          Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository, VpnService vpnService,
+                         ExecutorService connectionExecutors,
                          long writeToDeviceTimeout, long readFromDeviceTimeout) throws IOException {
         this.writeToDeviceTimeout = writeToDeviceTimeout;
         this.readFromDeviceTimeout = readFromDeviceTimeout;
@@ -70,14 +71,14 @@ public class TcpConnection implements Runnable {
         this.currentSequenceNumber = new AtomicLong(0);
         this.deviceInitialSequenceNumber = new AtomicLong(0);
         this.vpnInitialSequenceNumber = new AtomicLong(0);
-        this.deviceInbound = new PriorityBlockingQueue<>(1024,
-                Comparator.comparingLong(p -> p.getHeader().getSequenceNumber()));
+        this.deviceInbound =
+                new PriorityBlockingQueue<>(1024, Comparator.comparingLong(p -> p.getHeader().getSequenceNumber()));
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.connectionRepository = connectionRepository;
         this.establishLatch = new CountDownLatch(1);
         this.remoteSocketChannel = SocketChannel.open();
         this.remoteSocketChannel.configureBlocking(true);
-        this.connectionExecutors = Executors.newFixedThreadPool(3);
+        this.connectionExecutors = connectionExecutors;
         if (!vpnService.protect(this.remoteSocketChannel.socket())) {
             Log.e(TcpConnection.class.getName(),
                     "Fail to protect vpn tcp socket, current connection: " + this + ", remote socket: " +
@@ -203,7 +204,7 @@ public class TcpConnection implements Runnable {
             public void run() {
                 synchronized (this) {
                     try {
-                        this.wait(120000);
+                        this.wait(2 * 60 * 1000);
                     } catch (InterruptedException e) {
                         Log.e(TcpConnection.class.getName(), "Fail to execute waite time 2 msl task.", e);
                     } finally {
@@ -227,12 +228,7 @@ public class TcpConnection implements Runnable {
         this.status.set(TcpConnectionStatus.CLOSED);
         this.connectionRepository.remove(this.repositoryKey);
         this.running.set(false);
-        synchronized (this.deviceReceiveBuf) {
-            this.deviceReceiveBuf.notify();
-        }
-        if (this.establishLatch.getCount() == 1) {
-            this.establishLatch.countDown();
-        }
+        this.establishLatch.countDown();
         this.closeRemoteSocket();
     }
 
@@ -243,7 +239,12 @@ public class TcpConnection implements Runnable {
     }
 
     public void onDeviceInbound(TcpPacket tcpPacket) throws Exception {
-        this.deviceInbound.put(tcpPacket);
+        if (!this.deviceInbound.offer(tcpPacket, this.readFromDeviceTimeout, TimeUnit.MILLISECONDS)) {
+            Log.e(TcpConnection.class.getName(),
+                    ">>>>>>>> Fail to offer tcp packet from device inbound, current connection: " + this +
+                            ", tcp packet: " + tcpPacket + ", device inbound size: " + deviceInbound.size());
+            this.finallyCloseTcpConnection();
+        }
     }
 
     public TcpConnectionRepositoryKey getRepositoryKey() {
@@ -257,8 +258,8 @@ public class TcpConnection implements Runnable {
                 tcpPacket = this.deviceInbound.poll(this.readFromDeviceTimeout, TimeUnit.MILLISECONDS);
             } catch (Exception e) {
                 Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Fail to take tcp packet from inbound queue, current connection: " +
-                                this, e);
+                        ">>>>>>>> Fail to take tcp packet from inbound queue, current connection: " + this +
+                                ", device inbound size: " + deviceInbound.size(), e);
                 this.writeRstToDevice();
                 this.finallyCloseTcpConnection();
                 return;
@@ -266,11 +267,14 @@ public class TcpConnection implements Runnable {
             if (tcpPacket == null) {
                 Log.e(TcpConnection.class.getName(),
                         ">>>>>>>> Fail to take tcp packet from inbound queue because of timeout, current connection: " +
-                                this);
+                                this + ", device inbound size: " + deviceInbound.size());
                 this.writeRstToDevice();
                 this.finallyCloseTcpConnection();
                 return;
             }
+            Log.d(TcpConnection.class.getName(),
+                    ">>>>>>>> Success take tcp packet from device inbound, current connection: " + this +
+                            ", tcp packet: " + tcpPacket + ", device inbound size: " + deviceInbound.size());
             TcpHeader tcpHeader = tcpPacket.getHeader();
             if (tcpHeader.isSyn()) {
                 if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
@@ -294,42 +298,61 @@ public class TcpConnection implements Runnable {
                                 ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                 continue;
             }
+            if (tcpHeader.isRst()) {
+                Log.d(TcpConnection.class.getName(),
+                        ">>>>>>>> Receive rst close connection, current connection: " + this +
+                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                this.finallyCloseTcpConnection();
+                return;
+            }
             if (tcpHeader.isAck()) {
                 if (tcpHeader.isFin()) {
                     if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
                         Log.e(TcpConnection.class.getName(),
                                 ">>>>>>>> Receive fin ack on SYNC_RCVD close connection directly, current connection:  " +
-                                        this +
-                                        ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                                        this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                         this.writeRstToDevice();
                         this.finallyCloseTcpConnection();
                         return;
                     }
                     //Receive Fin on established status.
                     //After fin, no more device data will be sent to vpn
+                    synchronized (this.deviceReceiveBuf) {
+                        int remainingSpace = this.countDeviceReceiveBufRemainingSpace();
+                        if (tcpPacket.getData().length > remainingSpace) {
+                            Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
+                                    ") but no space in the device receive buffer, ack to discount window size, current connection:  " +
+                                    this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
+                                    " , device data size: " + tcpPacket.getData().length + ", write data: \n\n" +
+                                    new String(tcpPacket.getData()) + "\n\n");
+                            this.writeAckToDevice(null, remainingSpace);
+                            return;
+                        }
+                        receiveDeviceData(tcpPacket, tcpHeader, remainingSpace);
+                    }
+                    Log.d(TcpConnection.class.getName(),
+                            ">>>>>>>> Receive fin ack, current connection:  " + this +
+                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                     this.status.set(TcpConnectionStatus.WAIT_TIME);
                     this.currentAcknowledgementNumber.incrementAndGet();
                     this.writeAckToDevice(null, this.countDeviceReceiveBufRemainingSpace());
                     this.connectionExecutors.execute(this.waitTime2MslTask);
                     Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive fin ack on FIN_WAIT2 and start 2msl task, current connection:  " +
-                                    this +
+                            ">>>>>>>> Receive fin ack on FIN_WAIT2 and start 2msl task, current connection:  " + this +
                                     ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                     continue;
                 }
                 if (this.status.get() == TcpConnectionStatus.FIN_WAIT1) {
                     this.status.set(TcpConnectionStatus.FIN_WAIT2);
                     Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive ack on FIN_WAIT1, current connection:  " +
-                                    this +
+                            ">>>>>>>> Receive ack on FIN_WAIT1, current connection:  " + this +
                                     ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                     continue;
                 }
                 if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
                     if (this.currentSequenceNumber.get() + 1 != tcpHeader.getAcknowledgementNumber()) {
                         Log.e(TcpConnection.class.getName(),
-                                ">>>>>>>> Connection current seq number do not match incoming ack number:  " +
-                                        this +
+                                ">>>>>>>> Connection current seq number do not match incoming ack number:  " + this +
                                         ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                         this.writeRstToDevice();
                         this.finallyCloseTcpConnection();
@@ -369,38 +392,23 @@ public class TcpConnection implements Runnable {
                     synchronized (this.deviceReceiveBuf) {
                         int remainingSpace = this.countDeviceReceiveBufRemainingSpace();
                         if (tcpPacket.getData().length > remainingSpace) {
-                            Log.d(TcpConnection.class.getName(),
-                                    ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
-                                            ") but no space in the device receive buffer, ack to discount window size, current connection:  " +
-                                            this +
-                                            ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
-                                            " , device data size: " +
-                                            tcpPacket.getData().length + ", write data: \n\n" +
-                                            new String(tcpPacket.getData()) +
-                                            "\n\n");
+                            Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
+                                    ") but no space in the device receive buffer, ack to discount window size, current connection:  " +
+                                    this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
+                                    " , device data size: " + tcpPacket.getData().length + ", write data: \n\n" +
+                                    new String(tcpPacket.getData()) + "\n\n");
                             this.writeAckToDevice(null, remainingSpace);
-                            continue;
+                            return;
                         }
-                        this.deviceReceiveBuf.put(tcpPacket.getData());
-                        int dataLength = tcpPacket.getData().length;
-                        this.currentAcknowledgementNumber.addAndGet(dataLength);
-                        this.writeAckToDevice(null, remainingSpace);
-                        this.deviceReceiveBuf.notify();
-                        Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
-                                ") and put device data into device receive buffer, current connection:  " + this +
-                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
-                                " , device data size: " +
-                                tcpPacket.getData().length + ", write data: \n\n" +
-                                new String(tcpPacket.getData()) +
-                                "\n\n");
+                        receiveDeviceData(tcpPacket, tcpHeader, remainingSpace);
                         continue;
                     }
                 }
                 if (this.status.get() == TcpConnectionStatus.CLOSED_WAIT) {
                     // No data will from device anymore, just to consume the ack from device
                     Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
-                            ") on CLOSE_WAIT, current connection:  " + this +
-                            ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                            ") on CLOSE_WAIT, current connection:  " + this + ", incoming tcp packet: " +
+                            this.printTcpPacket(tcpPacket));
                     continue;
                 }
                 if (this.status.get() == TcpConnectionStatus.LAST_ACK) {
@@ -412,8 +420,7 @@ public class TcpConnection implements Runnable {
                     return;
                 }
                 Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Incorrect connection status going to close connection, current connection: " +
-                                this +
+                        ">>>>>>>> Incorrect connection status going to close connection, current connection: " + this +
                                 ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                 this.writeRstToDevice();
                 this.finallyCloseTcpConnection();
@@ -424,8 +431,7 @@ public class TcpConnection implements Runnable {
                 if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
                     //After fin, no more device data will be sent to vpn
                     Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive fin when connection ESTABLISHED, current connection: " +
-                                    this +
+                            ">>>>>>>> Receive fin when connection ESTABLISHED, current connection: " + this +
                                     ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                     this.status.set(TcpConnectionStatus.CLOSED_WAIT);
                     this.currentAcknowledgementNumber.incrementAndGet();
@@ -433,14 +439,26 @@ public class TcpConnection implements Runnable {
                     continue;
                 }
                 Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Incorrect connection status going to close connection, current connection: " +
-                                this +
+                        ">>>>>>>> Incorrect connection status going to close connection, current connection: " + this +
                                 ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                 this.writeRstToDevice();
                 this.finallyCloseTcpConnection();
                 return;
             }
         }
+    }
+
+    private void receiveDeviceData(TcpPacket tcpPacket, TcpHeader tcpHeader, int remainingSpace) {
+        this.deviceReceiveBuf.put(tcpPacket.getData());
+        int dataLength = tcpPacket.getData().length;
+        this.currentAcknowledgementNumber.addAndGet(dataLength);
+        this.writeAckToDevice(null, remainingSpace);
+        this.deviceReceiveBuf.notify();
+        Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
+                ") and put device data into device receive buffer, current connection:  " + this +
+                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) + " , device data size: " +
+                tcpPacket.getData().length + ", write data: \n\n" + new String(tcpPacket.getData()) +
+                "\n\n");
     }
 
     private int countDeviceReceiveBufRemainingSpace() {
@@ -582,8 +600,7 @@ public class TcpConnection implements Runnable {
 
     @Override
     public String toString() {
-        return "TcpConnection{" + "TIMESTAMP=" + TIMESTAMP + ", id='" + id + '\'' + ", repositoryKey=" +
-                repositoryKey +
+        return "TcpConnection{" + "TIMESTAMP=" + TIMESTAMP + ", id='" + id + '\'' + ", repositoryKey=" + repositoryKey +
                 ", status=" + status + ", currentSequenceNumber=" + currentSequenceNumber +
                 ", (Current Relative VPN Sequence Number)=" + this.countRelativeVpnSequenceNumber() +
                 ", currentAcknowledgementNumber=" + currentAcknowledgementNumber +
