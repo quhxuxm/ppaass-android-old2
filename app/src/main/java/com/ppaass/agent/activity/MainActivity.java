@@ -10,10 +10,12 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.ppaass.agent.R;
 import com.ppaass.agent.service.PpaassVpnService;
 
-import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -44,20 +46,51 @@ public class MainActivity extends AppCompatActivity {
         Button testVpnButton = this.findViewById(R.id.testButton);
         testVpnButton.setOnClickListener(view -> {
             testThreadPool.execute(() -> {
-                for (int j = 0; j < 20; j++) {
+                for (int j = 0; j < 100; j++) {
+                    CountDownLatch countDownLatch = new CountDownLatch(2);
                     try (Socket testSocket = new Socket()) {
                         testSocket.connect(new InetSocketAddress("192.168.31.200", 65533));
                         OutputStream testOutput = testSocket.getOutputStream();
-                        long timestamp = System.currentTimeMillis();
-                        testOutput.write((">>>>>>>>[" + timestamp + "]>>>>>>>>\n").getBytes());
-                        StringBuilder data = new StringBuilder();
-                        for (int i = 0; i < 10000; i++) {
-                            data.append("[").append(i).append("]::::abcdefghijklmnopqrstuvwxyz\n");
-                        }
-                        testOutput.write(data.toString().getBytes());
-                        testOutput.write(("<<<<<<<<[" + timestamp + "]<<<<<<<<\n").getBytes());
-                        testOutput.flush();
-                    } catch (IOException e) {
+                        InputStream testInput = testSocket.getInputStream();
+                        testThreadPool.execute(() -> {
+                            try {
+                                long timestamp = System.currentTimeMillis();
+                                StringBuilder data = new StringBuilder();
+                                data.append(">>>>>>>>[").append(timestamp).append("]>>>>>>>>");
+                                for (int i = 0; i < 100; i++) {
+                                    data.append("[").append(i).append("]-abcdefghijklmnopqrstuvwxyz;");
+                                }
+                                data.append("<<<<<<<<[").append(timestamp).append("]<<<<<<<<");
+                                testOutput.write(data.toString().getBytes());
+                                testOutput.write("\n\n".getBytes());
+                                testOutput.flush();
+                            } catch (Exception e) {
+                                Log.e(MainActivity.class.getName(), "Exception happen for write data to server.", e);
+                            } finally {
+                                countDownLatch.countDown();
+                            }
+                        });
+                        testThreadPool.execute(() -> {
+                            try {
+                                while (true) {
+                                    byte[] readBuf = new byte[1024];
+                                    int readSize = testInput.read(readBuf);
+                                    if (readSize <= 0) {
+                                        Log.d(MainActivity.class.getName(), "Nothing read from server.");
+                                        return;
+                                    }
+                                    byte[] readBufData = Arrays.copyOf(readBuf, readSize);
+                                    String data = new String(readBufData);
+                                    Log.d(MainActivity.class.getName(), "Read data from server:\n" + data + "\n");
+                                }
+                            } catch (Exception e) {
+                                Log.e(MainActivity.class.getName(), "Exception happen for read data from server.", e);
+                            } finally {
+                                countDownLatch.countDown();
+                            }
+                        });
+                        countDownLatch.await();
+                    } catch (Exception e) {
                         Log.e(MainActivity.class.getName(), "Exception happen for testing.", e);
                     }
                 }

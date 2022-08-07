@@ -150,7 +150,7 @@ public class TcpConnection implements Runnable {
                     try {
                         remoteDataBuf = ByteBuffer.allocateDirect(IVpnConst.READ_REMOTE_BUFFER_SIZE);
                         int readSize = TcpConnection.this.remoteSocketChannel.read(remoteDataBuf);
-                        if (readSize < 0) {
+                        if (readSize <= 0) {
                             synchronized (this) {
                                 try {
                                     this.wait(500);
@@ -228,7 +228,13 @@ public class TcpConnection implements Runnable {
         this.status.set(TcpConnectionStatus.CLOSED);
         this.connectionRepository.remove(this.repositoryKey);
         this.running.set(false);
+        synchronized (this.deviceReceiveBuf) {
+            this.deviceReceiveBuf.notify();
+        }
         this.establishLatch.countDown();
+        synchronized (this.deviceInbound) {
+            this.deviceInbound.notify();
+        }
         this.closeRemoteSocket();
     }
 
@@ -253,197 +259,218 @@ public class TcpConnection implements Runnable {
 
     public void run() {
         while (this.running.get()) {
-            TcpPacket tcpPacket = null;
             try {
-                tcpPacket = this.deviceInbound.poll(this.readFromDeviceTimeout, TimeUnit.MILLISECONDS);
-            } catch (Exception e) {
-                Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Fail to take tcp packet from inbound queue, current connection: " + this +
-                                ", device inbound size: " + deviceInbound.size(), e);
-                this.writeRstToDevice();
-                this.finallyCloseTcpConnection();
-                return;
-            }
-            if (tcpPacket == null) {
-                Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Fail to take tcp packet from inbound queue because of timeout, current connection: " +
-                                this + ", device inbound size: " + deviceInbound.size());
-                this.writeRstToDevice();
-                this.finallyCloseTcpConnection();
-                return;
-            }
-            Log.d(TcpConnection.class.getName(),
-                    ">>>>>>>> Success take tcp packet from device inbound, current connection: " + this +
-                            ", tcp packet: " + tcpPacket + ", device inbound size: " + deviceInbound.size());
-            TcpHeader tcpHeader = tcpPacket.getHeader();
-            if (tcpHeader.isSyn()) {
-                if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
+                TcpPacket tcpPacket = null;
+                try {
+                    tcpPacket = this.deviceInbound.poll(this.readFromDeviceTimeout, TimeUnit.MILLISECONDS);
+//                    tcpPacket = this.deviceInbound.take();
+                } catch (Exception e) {
                     Log.e(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive duplicate sync tcp packet, current connection: " + this +
-                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                            ">>>>>>>> Fail to take tcp packet from inbound queue, current connection: " + this +
+                                    ", device inbound size: " + deviceInbound.size(), e);
                     this.writeRstToDevice();
                     this.finallyCloseTcpConnection();
                     return;
                 }
-                //Initialize ack number and seq number
-                this.deviceInitialSequenceNumber.set(tcpHeader.getSequenceNumber());
-                this.currentAcknowledgementNumber.set(tcpHeader.getSequenceNumber() + 1);
-                long vpnIsn = this.generateVpnInitialSequenceNumber();
-                this.currentSequenceNumber.set(vpnIsn);
-                this.vpnInitialSequenceNumber.set(vpnIsn);
-                this.status.set(TcpConnectionStatus.SYNC_RCVD);
-                this.writeSyncAckToDevice();
+                if (tcpPacket == null) {
+                    Log.e(TcpConnection.class.getName(),
+                            ">>>>>>>> Fail to take tcp packet from inbound queue because of timeout, current connection: " +
+                                    this + ", device inbound size: " + deviceInbound.size());
+                    this.writeRstToDevice();
+                    this.finallyCloseTcpConnection();
+                    return;
+                }
                 Log.d(TcpConnection.class.getName(),
-                        ">>>>>>>> Receive sync and do sync ack, current connection: " + this +
-                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                continue;
-            }
-            if (tcpHeader.isRst()) {
-                Log.d(TcpConnection.class.getName(),
-                        ">>>>>>>> Receive rst close connection, current connection: " + this +
-                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                this.finallyCloseTcpConnection();
-                return;
-            }
-            if (tcpHeader.isAck()) {
-                if (tcpHeader.isFin()) {
+                        ">>>>>>>> Success take tcp packet from device inbound, current connection: " + this +
+                                ", tcp packet: " + tcpPacket + ", device inbound size: " + deviceInbound.size());
+                TcpHeader tcpHeader = tcpPacket.getHeader();
+                if (tcpHeader.isSyn()) {
                     if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
                         Log.e(TcpConnection.class.getName(),
-                                ">>>>>>>> Receive fin ack on SYNC_RCVD close connection directly, current connection:  " +
-                                        this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                        this.writeRstToDevice();
-                        this.finallyCloseTcpConnection();
-                        return;
-                    }
-                    //Receive Fin on established status.
-                    //After fin, no more device data will be sent to vpn
-                    synchronized (this.deviceReceiveBuf) {
-                        int remainingSpace = this.countDeviceReceiveBufRemainingSpace();
-                        if (tcpPacket.getData().length > remainingSpace) {
-                            Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
-                                    ") but no space in the device receive buffer, ack to discount window size, current connection:  " +
-                                    this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
-                                    " , device data size: " + tcpPacket.getData().length + ", write data: \n\n" +
-                                    new String(tcpPacket.getData()) + "\n\n");
-                            this.writeAckToDevice(null, remainingSpace);
-                            return;
-                        }
-                        receiveDeviceData(tcpPacket, tcpHeader, remainingSpace);
-                    }
-                    Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive fin ack, current connection:  " + this +
-                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                    this.status.set(TcpConnectionStatus.WAIT_TIME);
-                    this.currentAcknowledgementNumber.incrementAndGet();
-                    this.writeAckToDevice(null, this.countDeviceReceiveBufRemainingSpace());
-                    this.connectionExecutors.execute(this.waitTime2MslTask);
-                    Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive fin ack on FIN_WAIT2 and start 2msl task, current connection:  " + this +
-                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                    continue;
-                }
-                if (this.status.get() == TcpConnectionStatus.FIN_WAIT1) {
-                    this.status.set(TcpConnectionStatus.FIN_WAIT2);
-                    Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive ack on FIN_WAIT1, current connection:  " + this +
-                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                    continue;
-                }
-                if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
-                    if (this.currentSequenceNumber.get() + 1 != tcpHeader.getAcknowledgementNumber()) {
-                        Log.e(TcpConnection.class.getName(),
-                                ">>>>>>>> Connection current seq number do not match incoming ack number:  " + this +
+                                ">>>>>>>> Receive duplicate sync tcp packet, current connection: " + this +
                                         ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                         this.writeRstToDevice();
                         this.finallyCloseTcpConnection();
                         return;
                     }
-                    try {
-                        this.connectRemote();
-                    } catch (Exception e) {
-                        this.writeRstToDevice();
-                        this.finallyCloseTcpConnection();
-                        Log.e(TcpConnection.class.getName(),
-                                ">>>>>>>> Connect to remote fail, current connection:  " + this +
-                                        ", incoming tcp packet: " + this.printTcpPacket(tcpPacket), e);
-                        return;
-                    }
-                    this.currentSequenceNumber.getAndIncrement();
-                    this.status.set(TcpConnectionStatus.ESTABLISHED);
-                    //Start remote relay to device task
-                    this.connectionExecutors.execute(this.relayRemoteDataToDeviceTask);
-                    //Start device relay to remote task
-                    this.connectionExecutors.execute(this.relayDeviceDataToRemoteTask);
-                    this.establishLatch.countDown();
+                    //Initialize ack number and seq number
+                    this.deviceInitialSequenceNumber.set(tcpHeader.getSequenceNumber());
+                    this.currentAcknowledgementNumber.set(tcpHeader.getSequenceNumber() + 1);
+                    long vpnIsn = this.generateVpnInitialSequenceNumber();
+                    this.currentSequenceNumber.set(vpnIsn);
+                    this.vpnInitialSequenceNumber.set(vpnIsn);
+                    this.status.set(TcpConnectionStatus.SYNC_RCVD);
+                    this.writeSyncAckToDevice();
                     Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive ack and remote connection established, current connection: " + this +
+                            ">>>>>>>> Receive sync and do sync ack, current connection: " + this +
                                     ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                     continue;
                 }
-                if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
-                    if (this.currentAcknowledgementNumber.get() > tcpHeader.getSequenceNumber()) {
-                        Log.d(TcpConnection.class.getName(),
-                                ">>>>>>>> Ignore duplicate ACK - (PSH=" + tcpHeader.isPsh() +
-                                        "), current connection:  " + this + ", incoming tcp packet: " +
-                                        this.printTcpPacket(tcpPacket) + " , device data size: " +
-                                        tcpPacket.getData().length);
-                        continue;
-                    }
-                    synchronized (this.deviceReceiveBuf) {
-                        int remainingSpace = this.countDeviceReceiveBufRemainingSpace();
-                        if (tcpPacket.getData().length > remainingSpace) {
-                            Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
-                                    ") but no space in the device receive buffer, ack to discount window size, current connection:  " +
-                                    this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
-                                    " , device data size: " + tcpPacket.getData().length + ", write data: \n\n" +
-                                    new String(tcpPacket.getData()) + "\n\n");
-                            this.writeAckToDevice(null, remainingSpace);
+                if (tcpHeader.isRst()) {
+                    Log.d(TcpConnection.class.getName(),
+                            ">>>>>>>> Receive rst close connection, current connection: " + this +
+                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                    this.finallyCloseTcpConnection();
+                    return;
+                }
+                if (tcpHeader.isAck()) {
+                    if (tcpHeader.isFin()) {
+                        if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
+                            Log.e(TcpConnection.class.getName(),
+                                    ">>>>>>>> Receive fin ack on SYNC_RCVD close connection directly, current connection:  " +
+                                            this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                            this.writeRstToDevice();
+                            this.finallyCloseTcpConnection();
                             return;
                         }
-                        receiveDeviceData(tcpPacket, tcpHeader, remainingSpace);
+                        //Receive Fin on established status.
+                        //After fin, no more device data will be sent to vpn
+                        synchronized (this.deviceReceiveBuf) {
+                            int remainingSpace = this.countDeviceReceiveBufRemainingSpace();
+                            if (tcpPacket.getData().length > remainingSpace) {
+                                Log.d(TcpConnection.class.getName(),
+                                        ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
+                                                ") but no space in the device receive buffer, ack to discount window size, current connection:  " +
+                                                this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
+                                                " , device data size: " + tcpPacket.getData().length +
+                                                ", write data: \n\n" +
+                                                new String(tcpPacket.getData()) + "\n\n");
+                                this.writeAckToDevice(null, remainingSpace);
+                                return;
+                            }
+                            receiveDeviceData(tcpPacket, tcpHeader, remainingSpace);
+                        }
+                        Log.d(TcpConnection.class.getName(),
+                                ">>>>>>>> Receive fin ack, current connection:  " + this +
+                                        ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                        this.status.set(TcpConnectionStatus.WAIT_TIME);
+                        this.currentAcknowledgementNumber.incrementAndGet();
+                        this.writeAckToDevice(null, this.countDeviceReceiveBufRemainingSpace());
+                        this.connectionExecutors.execute(this.waitTime2MslTask);
+                        Log.d(TcpConnection.class.getName(),
+                                ">>>>>>>> Receive fin ack on FIN_WAIT2 and start 2msl task, current connection:  " +
+                                        this +
+                                        ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                         continue;
                     }
+                    if (this.status.get() == TcpConnectionStatus.FIN_WAIT1) {
+                        this.status.set(TcpConnectionStatus.FIN_WAIT2);
+                        Log.d(TcpConnection.class.getName(),
+                                ">>>>>>>> Receive ack on FIN_WAIT1, current connection:  " + this +
+                                        ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                        continue;
+                    }
+                    if (this.status.get() == TcpConnectionStatus.SYNC_RCVD) {
+                        if (this.currentSequenceNumber.get() + 1 != tcpHeader.getAcknowledgementNumber()) {
+                            Log.e(TcpConnection.class.getName(),
+                                    ">>>>>>>> Connection current seq number do not match incoming ack number:  " +
+                                            this +
+                                            ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                            this.writeRstToDevice();
+                            this.finallyCloseTcpConnection();
+                            return;
+                        }
+                        try {
+                            this.connectRemote();
+                        } catch (Exception e) {
+                            this.writeRstToDevice();
+                            this.finallyCloseTcpConnection();
+                            Log.e(TcpConnection.class.getName(),
+                                    ">>>>>>>> Connect to remote fail, current connection:  " + this +
+                                            ", incoming tcp packet: " + this.printTcpPacket(tcpPacket), e);
+                            return;
+                        }
+                        this.currentSequenceNumber.getAndIncrement();
+                        this.status.set(TcpConnectionStatus.ESTABLISHED);
+                        //Start remote relay to device task
+                        this.connectionExecutors.execute(this.relayRemoteDataToDeviceTask);
+                        //Start device relay to remote task
+                        this.connectionExecutors.execute(this.relayDeviceDataToRemoteTask);
+                        this.establishLatch.countDown();
+                        Log.d(TcpConnection.class.getName(),
+                                ">>>>>>>> Receive ack and remote connection established, current connection: " + this +
+                                        ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                        continue;
+                    }
+                    if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
+                        if (this.currentAcknowledgementNumber.get() > tcpHeader.getSequenceNumber()) {
+                            Log.d(TcpConnection.class.getName(),
+                                    ">>>>>>>> Ignore duplicate ACK - (PSH=" + tcpHeader.isPsh() +
+                                            "), current connection:  " + this + ", incoming tcp packet: " +
+                                            this.printTcpPacket(tcpPacket) + " , device data size: " +
+                                            tcpPacket.getData().length);
+                            continue;
+                        }
+                        synchronized (this.deviceReceiveBuf) {
+                            int remainingSpace = this.countDeviceReceiveBufRemainingSpace();
+                            if (tcpPacket.getData().length > remainingSpace) {
+                                Log.d(TcpConnection.class.getName(),
+                                        ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
+                                                ") but no space in the device receive buffer, ack to discount window size, current connection:  " +
+                                                this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
+                                                " , device data size: " + tcpPacket.getData().length +
+                                                ", write data: \n\n" +
+                                                new String(tcpPacket.getData()) + "\n\n");
+                                this.writeAckToDevice(null, remainingSpace);
+                                return;
+                            }
+                            receiveDeviceData(tcpPacket, tcpHeader, remainingSpace);
+                            continue;
+                        }
+                    }
+                    if (this.status.get() == TcpConnectionStatus.CLOSED_WAIT) {
+                        // No data will from device anymore, just to consume the ack from device
+                        Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
+                                ") on CLOSE_WAIT, current connection:  " + this + ", incoming tcp packet: " +
+                                this.printTcpPacket(tcpPacket));
+                        continue;
+                    }
+                    if (this.status.get() == TcpConnectionStatus.LAST_ACK) {
+                        // Finally close the tcp connection after receive Fin from client.
+                        Log.d(TcpConnection.class.getName(),
+                                ">>>>>>>> Receive last ack, close connection: " + this + ", incoming tcp packet: " +
+                                        this.printTcpPacket(tcpPacket));
+                        this.finallyCloseTcpConnection();
+                        return;
+                    }
+                    Log.e(TcpConnection.class.getName(),
+                            ">>>>>>>> Incorrect connection status going to close connection, current connection: " +
+                                    this +
+                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                    this.writeRstToDevice();
+                    this.finallyCloseTcpConnection();
+                    return;
                 }
-                if (this.status.get() == TcpConnectionStatus.CLOSED_WAIT) {
-                    // No data will from device anymore, just to consume the ack from device
-                    Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpHeader.isPsh() +
-                            ") on CLOSE_WAIT, current connection:  " + this + ", incoming tcp packet: " +
-                            this.printTcpPacket(tcpPacket));
-                    continue;
-                }
-                if (this.status.get() == TcpConnectionStatus.LAST_ACK) {
-                    // Finally close the tcp connection after receive Fin from client.
-                    Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive last ack, close connection: " + this + ", incoming tcp packet: " +
-                                    this.printTcpPacket(tcpPacket));
+                if (tcpHeader.isFin()) {
+                    //Receive Fin on established status.
+                    if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
+                        //After fin, no more device data will be sent to vpn
+                        Log.d(TcpConnection.class.getName(),
+                                ">>>>>>>> Receive fin when connection ESTABLISHED, current connection: " + this +
+                                        ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                        this.status.set(TcpConnectionStatus.CLOSED_WAIT);
+                        this.currentAcknowledgementNumber.incrementAndGet();
+                        this.writeAckToDevice(null, this.countDeviceReceiveBufRemainingSpace());
+                        continue;
+                    }
+                    Log.e(TcpConnection.class.getName(),
+                            ">>>>>>>> Incorrect connection status going to close connection, current connection: " +
+                                    this +
+                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                    this.writeRstToDevice();
                     this.finallyCloseTcpConnection();
                     return;
                 }
                 Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Incorrect connection status going to close connection, current connection: " + this +
+                        ">>>>>>>> Incorrect tcp header going to close connection, current connection: " +
+                                this +
                                 ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
                 this.writeRstToDevice();
                 this.finallyCloseTcpConnection();
                 return;
-            }
-            if (tcpHeader.isFin()) {
-                //Receive Fin on established status.
-                if (this.status.get() == TcpConnectionStatus.ESTABLISHED) {
-                    //After fin, no more device data will be sent to vpn
-                    Log.d(TcpConnection.class.getName(),
-                            ">>>>>>>> Receive fin when connection ESTABLISHED, current connection: " + this +
-                                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                    this.status.set(TcpConnectionStatus.CLOSED_WAIT);
-                    this.currentAcknowledgementNumber.incrementAndGet();
-                    this.writeAckToDevice(null, this.countDeviceReceiveBufRemainingSpace());
-                    continue;
-                }
-                Log.e(TcpConnection.class.getName(),
-                        ">>>>>>>> Incorrect connection status going to close connection, current connection: " + this +
-                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                this.writeRstToDevice();
-                this.finallyCloseTcpConnection();
-                return;
+            } finally {
+                Log.d(TcpConnection.class.getName(),
+                        "Current connection: " + this + ", connection repository: " + this.connectionRepository);
             }
         }
     }
