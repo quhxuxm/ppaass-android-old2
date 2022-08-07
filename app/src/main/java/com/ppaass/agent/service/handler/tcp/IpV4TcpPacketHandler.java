@@ -39,7 +39,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
             TcpConnection result = null;
             try {
                 result = new TcpConnection(repositoryKey, this, connectionRepository,
-                        IpV4TcpPacketHandler.this.vpnService, this.connectionThreadPool, 120000, 120000);
+                        IpV4TcpPacketHandler.this.vpnService, this.connectionThreadPool, 20000, 20000);
             } catch (IOException e) {
                 Log.e(IpV4TcpPacketHandler.class.getName(),
                         ">>>>>>>> Fail to create tcp connection: " + result + ", tcp packet: " + tcpPacket, e);

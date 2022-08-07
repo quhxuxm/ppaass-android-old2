@@ -46,7 +46,7 @@ public class MainActivity extends AppCompatActivity {
         Button testVpnButton = this.findViewById(R.id.testButton);
         testVpnButton.setOnClickListener(view -> {
             testThreadPool.execute(() -> {
-                for (int j = 0; j < 100; j++) {
+                for (int j = 0; j < 1; j++) {
                     CountDownLatch countDownLatch = new CountDownLatch(2);
                     try (Socket testSocket = new Socket()) {
                         testSocket.connect(new InetSocketAddress("192.168.31.200", 65533));
