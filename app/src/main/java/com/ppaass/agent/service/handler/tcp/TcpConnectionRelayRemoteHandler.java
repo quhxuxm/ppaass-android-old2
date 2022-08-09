@@ -17,6 +17,9 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
+        if (tcpConnection == null) {
+            return;
+        }
         Log.d(TcpConnection.class.getName(),
                 "<<<<---- Tcp connection connected, current connection:  " +
                         tcpConnection);
@@ -26,6 +29,9 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
     public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
+        if (tcpConnection == null) {
+            return;
+        }
         if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED_WAIT) {
             tcpConnection.writeFinAckToDevice();
             tcpConnection.setStatus(TcpConnectionStatus.LAST_ACK);
@@ -40,6 +46,9 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
     protected void channelRead0(ChannelHandlerContext ctx, ByteBuf remoteDataBuf) throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
+        if (tcpConnection == null) {
+            return;
+        }
         Log.d(TcpConnection.class.getName(),
                 "<<<<---- Connection in establish status, begin to relay remote data to device, current connection: " +
                         tcpConnection);

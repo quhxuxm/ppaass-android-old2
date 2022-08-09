@@ -1,17 +1,25 @@
 package com.ppaass.agent.service.handler.tcp;
 
+import android.net.VpnService;
 import android.util.Log;
+import androidx.annotation.NonNull;
 import com.ppaass.agent.protocol.general.tcp.TcpHeader;
 import com.ppaass.agent.protocol.general.tcp.TcpHeaderOption;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.general.tcp.TcpPacketBuilder;
 import com.ppaass.agent.service.IVpnConst;
+import com.ppaass.agent.service.PpaassVpnTcpChannelFactory;
 import com.ppaass.agent.service.handler.TcpIpPacketWriter;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.util.AttributeKey;
 
 import java.io.IOException;
@@ -25,7 +33,6 @@ import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -45,6 +52,7 @@ public class TcpConnection implements Runnable {
     private final String id;
     private final TcpConnectionRepositoryKey repositoryKey;
     private Channel remoteChannel;
+    private Bootstrap remoteBootstrap;
     private final TcpIpPacketWriter tcpIpPacketWriter;
     private final BlockingQueue<TcpPacket> deviceInbound;
     private final Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository;
@@ -53,21 +61,19 @@ public class TcpConnection implements Runnable {
     private final AtomicLong currentAcknowledgementNumber;
     private final AtomicLong deviceInitialSequenceNumber;
     private final AtomicLong vpnInitialSequenceNumber;
-    private final AtomicBoolean running;
     //    private final Thread writeToDeviceTask;
-    private final Runnable waitTime2MslTask;
+//    private final Runnable waitTime2MslTask;
     private final long writeToDeviceTimeout;
     private final long readFromDeviceTimeout;
-    private final Bootstrap remoteBootstrap;
+    private final VpnService vpnService;
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpIpPacketWriter tcpIpPacketWriter,
                          Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository, long writeToDeviceTimeout,
                          long readFromDeviceTimeout,
-                         Bootstrap remoteBootstrap)
-            throws IOException {
+                         VpnService vpnService) {
         this.writeToDeviceTimeout = writeToDeviceTimeout;
         this.readFromDeviceTimeout = readFromDeviceTimeout;
-        this.remoteBootstrap = remoteBootstrap;
+        this.vpnService = vpnService;
         this.id = UUID.randomUUID().toString().replace("-", "");
         this.repositoryKey = repositoryKey;
         this.status = new AtomicReference<>(TcpConnectionStatus.LISTEN);
@@ -79,45 +85,49 @@ public class TcpConnection implements Runnable {
                 new PriorityBlockingQueue<>(1024, Comparator.comparingLong(p -> p.getHeader().getSequenceNumber()));
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.connectionRepository = connectionRepository;
-        this.running = new AtomicBoolean(false);
-        this.waitTime2MslTask = new Runnable() {
-            @Override
-            public void run() {
-                synchronized (this) {
-                    try {
-                        this.wait(2 * 60 * 1000);
-                    } catch (InterruptedException e) {
-                        Log.e(TcpConnection.class.getName(), "Fail to execute waite time 2 msl task.", e);
-                    } finally {
-                        TcpConnection.this.finallyCloseTcpConnection();
-                    }
-                }
-            }
-        };
+//        this.waitTime2MslTask = new Runnable() {
+//            @Override
+//            public void run() {
+//                synchronized (this) {
+//                    try {
+//                        this.wait(2 * 60 * 1000);
+//                    } catch (InterruptedException e) {
+//                        Log.e(TcpConnection.class.getName(), "Fail to execute waite time 2 msl task.", e);
+//                    } finally {
+//                        TcpConnection.this.finallyCloseTcpConnection();
+//                    }
+//                }
+//            }
+//        };
     }
 
     private int generateVpnInitialSequenceNumber() {
         return INITIAL_SEQ.getAndIncrement();
     }
 
-    public void start() {
-        this.running.set(true);
-    }
-
-    private void finallyCloseTcpConnection() {
+    public void finallyCloseTcpConnection() {
         this.deviceInbound.clear();
         this.status.set(TcpConnectionStatus.CLOSED);
         this.connectionRepository.remove(this.repositoryKey);
-        this.running.set(false);
-        this.closeRemoteSocket();
+        try {
+            this.remoteChannel.close();
+        } catch (Exception e) {
+            Log.e(TcpConnection.class.getName(),
+                    ">>>>>>>> Fail to close remote channel, current connection: " + this +
+                            ", device inbound size: " + deviceInbound.size(), e);
+        }
     }
 
     private Channel connectRemote() throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
-        this.remoteBootstrap.attr(tcpConnectionKey, this);
-        return this.remoteBootstrap.connect(
+        Bootstrap remoteBootstrap = this.createBootstrap();
+        remoteBootstrap.attr(tcpConnectionKey, this);
+        this.remoteBootstrap = remoteBootstrap;
+        ChannelFuture connectFuture = remoteBootstrap.connect(
                 new InetSocketAddress(InetAddress.getByAddress(this.repositoryKey.getDestinationAddress()),
-                        this.repositoryKey.getDestinationPort())).sync().channel();
+                        this.repositoryKey.getDestinationPort())).sync();
+        connectFuture.get();
+        return connectFuture.channel();
     }
 
     public void onDeviceInbound(TcpPacket tcpPacket) throws Exception {
@@ -126,10 +136,6 @@ public class TcpConnection implements Runnable {
 
     public TcpConnectionRepositoryKey getRepositoryKey() {
         return repositoryKey;
-    }
-
-    public boolean isRunning() {
-        return this.running.get();
     }
 
     public TcpConnectionStatus getStatus() {
@@ -148,8 +154,28 @@ public class TcpConnection implements Runnable {
         return currentSequenceNumber;
     }
 
+    private Bootstrap createBootstrap() {
+        Bootstrap result = new Bootstrap();
+        result.group(new NioEventLoopGroup(1));
+        result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
+        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 30000);
+        result.option(ChannelOption.SO_TIMEOUT, 30000);
+        result.option(ChannelOption.SO_KEEPALIVE, true);
+        result.option(ChannelOption.AUTO_READ, true);
+        result.option(ChannelOption.AUTO_CLOSE, true);
+        result.option(ChannelOption.TCP_NODELAY, true);
+        result.option(ChannelOption.SO_REUSEADDR, true);
+        result.handler(new ChannelInitializer<NioSocketChannel>() {
+            @Override
+            protected void initChannel(@NonNull NioSocketChannel ch) throws Exception {
+                ch.pipeline().addLast(new TcpConnectionRelayRemoteHandler());
+            }
+        });
+        return result;
+    }
+
     public void run() {
-        while (this.running.get()) {
+        while (this.status.get() != TcpConnectionStatus.CLOSED) {
             try {
                 TcpPacket tcpPacket = null;
                 try {
@@ -214,6 +240,9 @@ public class TcpConnection implements Runnable {
                             this.finallyCloseTcpConnection();
                             return;
                         }
+                        if (this.status.get() == TcpConnectionStatus.CLOSED) {
+                            return;
+                        }
                         //Receive Fin on established status.
                         //After fin, no more device data will be sent to vpn
                         try {
@@ -232,11 +261,12 @@ public class TcpConnection implements Runnable {
                         this.status.set(TcpConnectionStatus.WAIT_TIME);
                         this.currentAcknowledgementNumber.incrementAndGet();
                         this.writeAckToDevice(null);
-                        new Thread(this.waitTime2MslTask).start();
+                        // TODO should make 2msl close, here just close directly
+                        this.finallyCloseTcpConnection();
                         Log.d(TcpConnection.class.getName(),
                                 ">>>>>>>> Receive fin ack on FIN_WAIT2 and start 2msl task, current connection:  " +
                                         this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
-                        continue;
+                        return;
                     }
                     if (this.status.get() == TcpConnectionStatus.FIN_WAIT1) {
                         this.status.set(TcpConnectionStatus.FIN_WAIT2);
@@ -346,29 +376,24 @@ public class TcpConnection implements Runnable {
                                 this.deviceInbound.size());
             }
         }
+        this.finallyCloseTcpConnection();
     }
 
     private void writeDataToRemote(TcpPacket tcpPacket) throws IOException {
         int dataLength = tcpPacket.getData().length;
         this.currentAcknowledgementNumber.addAndGet(dataLength);
         this.writeAckToDevice(null);
-        ByteBuf dataBuffer = Unpooled.wrappedBuffer(tcpPacket.getData());
-        this.remoteChannel.writeAndFlush(dataBuffer).addListener(future -> {
-            if (future.isSuccess()) {
-                Log.d(TcpConnection.class.getName(),
-                        ">>>>>>>> SUCCESS: Receive ACK - (PSH=" + tcpPacket.getHeader().isPsh() +
-                                ") and put device data into device receive buffer, current connection:  " + this +
-                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) + " , device data size: " +
-                                tcpPacket.getData().length + ", write data: \n\n" +
-                                ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(tcpPacket.getData())) + "\n\n");
-                return;
-            }
-            Log.d(TcpConnection.class.getName(), ">>>>>>>> FAIL: Receive ACK - (PSH=" + tcpPacket.getHeader().isPsh() +
-                    ") and put device data into device receive buffer, current connection:  " + this +
-                    ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) + " , device data size: " +
-                    tcpPacket.getData().length + ", write data: \n\n" +
-                    ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(tcpPacket.getData())) + "\n\n");
-        });
+        if (tcpPacket.getData() != null && tcpPacket.getData().length > 0) {
+            ByteBuf dataBuffer = Unpooled.wrappedBuffer(tcpPacket.getData());
+            this.remoteChannel.writeAndFlush(dataBuffer);
+            Log.d(TcpConnection.class.getName(),
+                    ">>>>>>>> Receive ACK - (PSH=" + tcpPacket.getHeader().isPsh() +
+                            ") and put device data into device receive buffer, current connection:  " + this +
+                            ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) +
+                            " , device data size: " +
+                            tcpPacket.getData().length + ", write data: \n\n" +
+                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(tcpPacket.getData())) + "\n\n");
+        }
     }
 
     private long countRelativeVpnSequenceNumber() {
@@ -377,17 +402,6 @@ public class TcpConnection implements Runnable {
 
     private long countRelativeDeviceSequenceNumber() {
         return this.currentAcknowledgementNumber.get() - this.deviceInitialSequenceNumber.get();
-    }
-
-    private void closeRemoteSocket() {
-        try {
-            if (this.remoteChannel == null) {
-                return;
-            }
-            this.remoteChannel.close();
-        } catch (Exception e) {
-            Log.e(TcpConnection.class.getName(), "Exception happen when close remote socket.", e);
-        }
     }
 
     private TcpPacket buildCommonTcpPacket(TcpPacketBuilder tcpPacketBuilder) {
