@@ -37,7 +37,6 @@ public class IpPacketHandler {
     }
 
     public void start() {
-        this.ipV4UdpPacketHandler.start();
         Executors.newSingleThreadExecutor().execute(() -> {
             while (IpPacketHandler.this.vpnService.isRunning()) {
                 try {
@@ -52,7 +51,6 @@ public class IpPacketHandler {
                             "Fail to read ip packet from raw input stream because of exception.", e);
                 }
             }
-            IpPacketHandler.this.ipV4UdpPacketHandler.stop();
         });
     }
 
