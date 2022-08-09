@@ -2,18 +2,27 @@ package com.ppaass.agent.service.handler.udp;
 
 import android.net.VpnService;
 import android.util.Log;
-import com.ppaass.agent.protocol.general.ip.*;
+import androidx.annotation.NonNull;
+import com.ppaass.agent.protocol.general.ip.IpV4Header;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
-import com.ppaass.agent.protocol.general.udp.UdpPacketBuilder;
-import org.apache.commons.codec.binary.Hex;
+import com.ppaass.agent.service.IVpnConst;
+import com.ppaass.agent.service.PpaassVpnUdpChannelFactory;
+import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.DatagramChannel;
+import io.netty.channel.socket.DatagramPacket;
+import io.netty.util.AttributeKey;
 
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
-import java.nio.channels.DatagramChannel;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,7 +30,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class IpV4UdpPacketHandler {
     private final OutputStream rawDeviceOutputStream;
     private final VpnService vpnService;
-    private final ExecutorService udpThreadPool;
     private final BlockingQueue<IpV4UdpPacketWrapper> deviceInbound;
     private final AtomicBoolean running;
 
@@ -29,13 +37,28 @@ public class IpV4UdpPacketHandler {
             throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
-        this.udpThreadPool = Executors.newFixedThreadPool(32);
         this.deviceInbound = new LinkedBlockingQueue<>();
         this.running = new AtomicBoolean(false);
     }
 
-    public void onDeviceInbound(IpV4UdpPacketWrapper udpPacketWrapper) throws InterruptedException {
-        this.deviceInbound.put(udpPacketWrapper);
+    private Bootstrap createBootstrap() {
+        Bootstrap result = new Bootstrap();
+        result.group(new NioEventLoopGroup(8));
+        result.channelFactory(new PpaassVpnUdpChannelFactory(this.vpnService));
+        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 30000);
+        result.option(ChannelOption.SO_TIMEOUT, 30000);
+        result.option(ChannelOption.SO_KEEPALIVE, true);
+        result.option(ChannelOption.AUTO_READ, true);
+        result.option(ChannelOption.AUTO_CLOSE, true);
+        result.option(ChannelOption.TCP_NODELAY, true);
+        result.option(ChannelOption.SO_REUSEADDR, true);
+        result.handler(new ChannelInitializer<DatagramChannel>() {
+            @Override
+            protected void initChannel(@NonNull DatagramChannel ch) throws Exception {
+                ch.pipeline().addLast(new IpV4UdpChannelHandler(rawDeviceOutputStream));
+            }
+        });
+        return result;
     }
 
     public void stop() {
@@ -45,70 +68,48 @@ public class IpV4UdpPacketHandler {
     public void start() {
         this.running.set(true);
         Executors.newSingleThreadExecutor().execute(() -> {
+            Bootstrap udpBootstrap = this.createBootstrap();
+            Channel udpChannel;
+            try {
+                udpChannel = udpBootstrap.bind(0).sync().channel();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
             while (this.running.get()) {
                 try {
                     IpV4UdpPacketWrapper udpPacketWrapper = IpV4UdpPacketHandler.this.deviceInbound.take();
-                    IpV4UdpPacketHandler.this.udpThreadPool.execute(() -> {
-                        UdpPacket udpPacket = udpPacketWrapper.getUdpPacket();
-                        IpV4Header ipV4Header = udpPacketWrapper.getIpV4Header();
-                        Log.d(IpV4UdpPacketHandler.class.getName(), udpPacket.toString());
-                        try (DatagramChannel deviceToRemoteChannel = DatagramChannel.open()) {
-                            if (!IpV4UdpPacketHandler.this.vpnService.protect(deviceToRemoteChannel.socket())) {
-                                Log.e(IpV4UdpPacketHandler.class.getName(), "Fail to protect vpn udp socket");
-                                throw new UnsupportedOperationException("Fail to protect vpn udp socket");
-                            }
-                            InetAddress destinationAddress =
-                                    InetAddress.getByAddress(ipV4Header.getDestinationAddress());
-                            int destinationPort = udpPacket.getHeader().getDestinationPort();
-                            InetSocketAddress deviceToRemoteDestinationAddress =
-                                    new InetSocketAddress(destinationAddress, destinationPort);
-                            deviceToRemoteChannel.socket().setSoTimeout(2000);
+                    UdpPacket udpPacket = udpPacketWrapper.getUdpPacket();
+                    IpV4Header ipV4Header = udpPacketWrapper.getIpV4Header();
+                    Log.d(IpV4UdpPacketHandler.class.getName(), udpPacket.toString());
+                    InetAddress destinationAddress =
+                            InetAddress.getByAddress(ipV4Header.getDestinationAddress());
+                    int destinationPort = udpPacket.getHeader().getDestinationPort();
+                    InetSocketAddress deviceToRemoteDestinationAddress =
+                            new InetSocketAddress(destinationAddress, destinationPort);
+                    ByteBuf udpPacketData = Unpooled.wrappedBuffer(udpPacket.getData());
+                    DatagramPacket datagramPacket = new DatagramPacket(udpPacketData,
+                            deviceToRemoteDestinationAddress);
+                    AttributeKey<byte[]> udpSourceAddressKey = AttributeKey.valueOf(IVpnConst.UDP_SOURCE_ADDR);
+                    udpChannel.attr(udpSourceAddressKey).set(ipV4Header.getSourceAddress());
+                    AttributeKey<Integer> udpSourcePortKey = AttributeKey.valueOf(IVpnConst.UDP_SOURCE_PORT);
+                    udpChannel.attr(udpSourcePortKey).set(udpPacket.getHeader().getSourcePort());
+                    udpChannel.writeAndFlush(datagramPacket).addListener(future -> {
+                        ByteBuf udpPacketDataForLog = Unpooled.wrappedBuffer(udpPacket.getData());
+                        if (future.isSuccess()) {
                             Log.d(IpV4UdpPacketHandler.class.getName(),
-                                    "Begin to send udp packet to remote: " + udpPacket + ", destination: " +
+                                    "Success to send udp packet to remote: " + udpPacket + ", destination: " +
                                             deviceToRemoteDestinationAddress + ", udp content going to send:\n\n" +
-                                            Hex.encodeHexString(udpPacket.getData()) +
+                                            ByteBufUtil.prettyHexDump(udpPacketDataForLog) +
                                             "\n\n");
-                            deviceToRemoteChannel.connect(deviceToRemoteDestinationAddress);
-                            deviceToRemoteChannel.write(ByteBuffer.wrap(udpPacket.getData()));
-                            ByteBuffer remoteToDeviceUdpPacketContent = ByteBuffer.allocateDirect(65535);
-                            deviceToRemoteChannel.receive(remoteToDeviceUdpPacketContent);
-                            deviceToRemoteChannel.disconnect();
-                            UdpPacketBuilder remoteToDeviceUdpPacketBuilder = new UdpPacketBuilder();
-                            remoteToDeviceUdpPacketContent.flip();
-                            byte[] packetFromRemoteToDeviceContent =
-                                    new byte[remoteToDeviceUdpPacketContent.remaining()];
-                            remoteToDeviceUdpPacketContent.get(packetFromRemoteToDeviceContent);
-                            remoteToDeviceUdpPacketBuilder.data(packetFromRemoteToDeviceContent);
-                            remoteToDeviceUdpPacketBuilder.destinationPort(udpPacket.getHeader().getSourcePort());
-                            remoteToDeviceUdpPacketBuilder.sourcePort(udpPacket.getHeader().getDestinationPort());
-                            UdpPacket remoteToDeviceUdpPacket = remoteToDeviceUdpPacketBuilder.build();
-                            Log.d(IpV4UdpPacketHandler.class.getName(),
-                                    "Success receive remote udp packet, destination: " +
-                                            deviceToRemoteDestinationAddress + ", udp content received:\n\n" +
-                                            Hex.encodeHexString(packetFromRemoteToDeviceContent) + "\n\n");
-                            IpPacketBuilder ipPacketBuilder = new IpPacketBuilder();
-                            ipPacketBuilder.data(remoteToDeviceUdpPacket);
-                            IpV4HeaderBuilder ipV4HeaderBuilder = new IpV4HeaderBuilder();
-                            ipV4HeaderBuilder.destinationAddress(ipV4Header.getSourceAddress());
-                            ipV4HeaderBuilder.sourceAddress(ipV4Header.getDestinationAddress());
-                            ipV4HeaderBuilder.protocol(IpDataProtocol.UDP);
-                            ipV4HeaderBuilder.identification((short) (Math.random() * 10000));
-                            ipPacketBuilder.header(ipV4HeaderBuilder.build());
-                            IpPacket ipPacket = ipPacketBuilder.build();
-                            ByteBuffer ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
-                            byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
-                            ipPacketBytes.get(bytesWriteToDevice);
-                            ipPacketBytes.clear();
-                            synchronized (IpV4UdpPacketHandler.this.rawDeviceOutputStream) {
-                                IpV4UdpPacketHandler.this.rawDeviceOutputStream.write(bytesWriteToDevice);
-                                IpV4UdpPacketHandler.this.rawDeviceOutputStream.flush();
-                            }
-                        } catch (Exception e) {
-                            Log.e(IpV4UdpPacketHandler.class.getName(),
-                                    "Fail to handle udp packet because of exception, udp packet: " + udpPacket, e);
+                            return;
                         }
+                        Log.d(IpV4UdpPacketHandler.class.getName(),
+                                "Fail to send udp packet to remote: " + udpPacket + ", destination: " +
+                                        deviceToRemoteDestinationAddress + ", udp content going to send:\n\n" +
+                                        ByteBufUtil.prettyHexDump(udpPacketDataForLog) +
+                                        "\n\n", future.cause());
                     });
-                } catch (InterruptedException e) {
+                } catch (Exception e) {
                     Log.e(IpV4UdpPacketHandler.class.getName(),
                             "Ip v4 udp handler have exception.", e);
                 }
