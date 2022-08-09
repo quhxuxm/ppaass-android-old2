@@ -2,12 +2,19 @@ package com.ppaass.agent.service.handler.tcp;
 
 import android.net.VpnService;
 import android.util.Log;
+import androidx.annotation.NonNull;
 import com.ppaass.agent.protocol.general.ip.*;
 import com.ppaass.agent.protocol.general.tcp.TcpHeader;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.general.tcp.TcpPacketReader;
 import com.ppaass.agent.protocol.general.tcp.TcpPacketWriter;
+import com.ppaass.agent.service.PpaassVpnTcpChannelFactory;
 import com.ppaass.agent.service.handler.TcpIpPacketWriter;
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.nio.NioSocketChannel;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -25,6 +32,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
     private final VpnService vpnService;
     private final ExecutorService connectionThreadPool;
     private int ipIdentifier;
+    private final Bootstrap remoteBootstrap;
 
     public IpV4TcpPacketHandler(OutputStream rawDeviceOutputStream, VpnService vpnService) {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
@@ -32,13 +40,32 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         this.connectionRepository = new ConcurrentHashMap<>();
         this.connectionThreadPool = Executors.newWorkStealingPool(32);
         this.ipIdentifier = RANDOM.nextInt(Short.MAX_VALUE * 2 + 2);
+        this.remoteBootstrap=this.createBootstrap();
     }
-
+    private Bootstrap createBootstrap() {
+        Bootstrap result = new Bootstrap();
+        result.group(new NioEventLoopGroup(1));
+        result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
+        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000);
+        result.option(ChannelOption.SO_TIMEOUT, 5000);
+        result.option(ChannelOption.SO_KEEPALIVE, true);
+        result.option(ChannelOption.AUTO_READ, true);
+        result.option(ChannelOption.AUTO_CLOSE, true);
+        result.option(ChannelOption.TCP_NODELAY, true);
+        result.option(ChannelOption.SO_REUSEADDR, true);
+        result.handler(new ChannelInitializer<NioSocketChannel>() {
+            @Override
+            protected void initChannel(@NonNull NioSocketChannel ch) throws Exception {
+                ch.pipeline().addLast(new TcpConnectionRelayRemoteHandler());
+            }
+        });
+        return result;
+    }
     private TcpConnection retrieveTcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket) {
         return this.connectionRepository.computeIfAbsent(repositoryKey, key -> {
             TcpConnection result = new TcpConnection(repositoryKey, this, connectionRepository,
                     20000, 20000,
-                    this.vpnService);
+                    this.remoteBootstrap);
             this.connectionThreadPool.execute(result);
             Log.d(IpV4TcpPacketHandler.class.getName(),
                     ">>>>>>>> Create tcp connection: " + result + ", tcp packet: " + tcpPacket);

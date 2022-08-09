@@ -1,14 +1,11 @@
 package com.ppaass.agent.service.handler.tcp;
 
-import android.net.VpnService;
 import android.util.Log;
-import androidx.annotation.NonNull;
 import com.ppaass.agent.protocol.general.tcp.TcpHeader;
 import com.ppaass.agent.protocol.general.tcp.TcpHeaderOption;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.general.tcp.TcpPacketBuilder;
 import com.ppaass.agent.service.IVpnConst;
-import com.ppaass.agent.service.PpaassVpnTcpChannelFactory;
 import com.ppaass.agent.service.handler.TcpIpPacketWriter;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -16,10 +13,6 @@ import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelOption;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.util.AttributeKey;
 
 import java.io.IOException;
@@ -52,7 +45,7 @@ public class TcpConnection implements Runnable {
     private final String id;
     private final TcpConnectionRepositoryKey repositoryKey;
     private Channel remoteChannel;
-    private Bootstrap remoteBootstrap;
+    private final Bootstrap remoteBootstrap;
     private final TcpIpPacketWriter tcpIpPacketWriter;
     private final BlockingQueue<TcpPacket> deviceInbound;
     private final Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository;
@@ -65,15 +58,13 @@ public class TcpConnection implements Runnable {
 //    private final Runnable waitTime2MslTask;
     private final long writeToDeviceTimeout;
     private final long readFromDeviceTimeout;
-    private final VpnService vpnService;
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpIpPacketWriter tcpIpPacketWriter,
                          Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository, long writeToDeviceTimeout,
                          long readFromDeviceTimeout,
-                         VpnService vpnService) {
+                         Bootstrap remoteBootstrap) {
         this.writeToDeviceTimeout = writeToDeviceTimeout;
         this.readFromDeviceTimeout = readFromDeviceTimeout;
-        this.vpnService = vpnService;
         this.id = UUID.randomUUID().toString().replace("-", "");
         this.repositoryKey = repositoryKey;
         this.status = new AtomicReference<>(TcpConnectionStatus.LISTEN);
@@ -85,6 +76,7 @@ public class TcpConnection implements Runnable {
                 new PriorityBlockingQueue<>(1024, Comparator.comparingLong(p -> p.getHeader().getSequenceNumber()));
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.connectionRepository = connectionRepository;
+        this.remoteBootstrap = remoteBootstrap;
 //        this.waitTime2MslTask = new Runnable() {
 //            @Override
 //            public void run() {
@@ -110,7 +102,9 @@ public class TcpConnection implements Runnable {
         this.status.set(TcpConnectionStatus.CLOSED);
         this.connectionRepository.remove(this.repositoryKey);
         try {
-            this.remoteChannel.close();
+            if (remoteChannel != null) {
+                this.remoteChannel.close();
+            }
         } catch (Exception e) {
             Log.e(TcpConnection.class.getName(),
                     ">>>>>>>> Fail to close remote channel, current connection: " + this +
@@ -120,14 +114,20 @@ public class TcpConnection implements Runnable {
 
     private Channel connectRemote() throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
-        Bootstrap remoteBootstrap = this.createBootstrap();
-        remoteBootstrap.attr(tcpConnectionKey, this);
-        this.remoteBootstrap = remoteBootstrap;
-        ChannelFuture connectFuture = remoteBootstrap.connect(
+        InetSocketAddress remoteAddress =
                 new InetSocketAddress(InetAddress.getByAddress(this.repositoryKey.getDestinationAddress()),
-                        this.repositoryKey.getDestinationPort())).sync();
-        connectFuture.get();
-        return connectFuture.channel();
+                        this.repositoryKey.getDestinationPort());
+        ChannelFuture channelFuture = remoteBootstrap.connect(remoteAddress);
+        channelFuture.channel().attr(tcpConnectionKey).setIfAbsent(this);
+        channelFuture = channelFuture.sync();
+        if (channelFuture.isSuccess()) {
+            Log.d(TcpConnection.class.getName(), ">>>>>>>> Success connect to remote: " + remoteAddress);
+            return channelFuture.channel();
+        } else {
+            Log.d(TcpConnection.class.getName(), ">>>>>>>> Fail connect to remote: " + remoteAddress,
+                    channelFuture.cause());
+            return null;
+        }
     }
 
     public void onDeviceInbound(TcpPacket tcpPacket) throws Exception {
@@ -152,26 +152,6 @@ public class TcpConnection implements Runnable {
 
     public AtomicLong getCurrentSequenceNumber() {
         return currentSequenceNumber;
-    }
-
-    private Bootstrap createBootstrap() {
-        Bootstrap result = new Bootstrap();
-        result.group(new NioEventLoopGroup(1));
-        result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
-        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 30000);
-        result.option(ChannelOption.SO_TIMEOUT, 30000);
-        result.option(ChannelOption.SO_KEEPALIVE, true);
-        result.option(ChannelOption.AUTO_READ, true);
-        result.option(ChannelOption.AUTO_CLOSE, true);
-        result.option(ChannelOption.TCP_NODELAY, true);
-        result.option(ChannelOption.SO_REUSEADDR, true);
-        result.handler(new ChannelInitializer<NioSocketChannel>() {
-            @Override
-            protected void initChannel(@NonNull NioSocketChannel ch) throws Exception {
-                ch.pipeline().addLast(new TcpConnectionRelayRemoteHandler());
-            }
-        });
-        return result;
     }
 
     public void run() {
@@ -246,6 +226,14 @@ public class TcpConnection implements Runnable {
                         //Receive Fin on established status.
                         //After fin, no more device data will be sent to vpn
                         try {
+                            if (this.remoteChannel == null) {
+                                this.writeRstToDevice();
+                                this.finallyCloseTcpConnection();
+                                Log.e(TcpConnection.class.getName(),
+                                        ">>>>>>>> Write to remote fail(fin ack), current connection:  " + this +
+                                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                                return;
+                            }
                             writeDataToRemote(tcpPacket);
                         } catch (Exception e) {
                             this.writeRstToDevice();
@@ -286,11 +274,19 @@ public class TcpConnection implements Runnable {
                         }
                         try {
                             this.remoteChannel = this.connectRemote();
+                            if (this.remoteChannel == null) {
+                                this.writeRstToDevice();
+                                this.finallyCloseTcpConnection();
+                                Log.e(TcpConnection.class.getName(),
+                                        ">>>>>>>> Connect to remote fail(NULL), current connection:  " + this +
+                                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                                return;
+                            }
                         } catch (Exception e) {
                             this.writeRstToDevice();
                             this.finallyCloseTcpConnection();
                             Log.e(TcpConnection.class.getName(),
-                                    ">>>>>>>> Connect to remote fail, current connection:  " + this +
+                                    ">>>>>>>> Connect to remote fail(EXCEPTION), current connection:  " + this +
                                             ", incoming tcp packet: " + this.printTcpPacket(tcpPacket), e);
                             return;
                         }
@@ -311,6 +307,14 @@ public class TcpConnection implements Runnable {
                             continue;
                         }
                         try {
+                            if (this.remoteChannel == null) {
+                                this.writeRstToDevice();
+                                this.finallyCloseTcpConnection();
+                                Log.e(TcpConnection.class.getName(),
+                                        ">>>>>>>> Write to remote fail(ack on ESTABLISHED), current connection:  " + this +
+                                                ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
+                                return;
+                            }
                             writeDataToRemote(tcpPacket);
                         } catch (IOException e) {
                             this.writeRstToDevice();
