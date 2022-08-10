@@ -58,7 +58,7 @@ public class TcpConnection implements Runnable {
     private final long writeToDeviceTimeout;
     private final long readFromDeviceTimeout;
     private final BlockingQueue<ByteBuf> deviceInboundBufQueue;
-    private final AtomicInteger windowSize;
+    private final AtomicInteger currentWindowSize;
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpIpPacketWriter tcpIpPacketWriter,
                          Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository, long writeToDeviceTimeout,
@@ -78,7 +78,7 @@ public class TcpConnection implements Runnable {
         this.connectionRepository = connectionRepository;
         this.remoteBootstrap = remoteBootstrap;
         this.deviceInboundBufQueue = new LinkedBlockingQueue<>();
-        this.windowSize = new AtomicInteger(IVpnConst.TCP_WINDOW);
+        this.currentWindowSize = new AtomicInteger(IVpnConst.TCP_WINDOW);
 //        this.waitTime2MslTask = new Runnable() {
 //            @Override
 //            public void run() {
@@ -100,12 +100,11 @@ public class TcpConnection implements Runnable {
     }
 
     public void finallyCloseTcpConnection() {
+        this.status.set(TcpConnectionStatus.CLOSED);
         this.deviceInbound.clear();
         this.deviceInboundBufQueue.clear();
-        this.status.set(TcpConnectionStatus.CLOSED);
-        this.connectionRepository.remove(this.repositoryKey);
-        synchronized (this.windowSize) {
-            this.windowSize.notify();
+        synchronized (this.currentWindowSize) {
+            this.currentWindowSize.notify();
         }
         synchronized (this.deviceInbound) {
             this.deviceInbound.notify();
@@ -119,6 +118,7 @@ public class TcpConnection implements Runnable {
                     ">>>>>>>> Fail to close remote channel, current connection: " + this + ", device inbound size: " +
                             deviceInbound.size(), e);
         }
+        this.connectionRepository.remove(this.repositoryKey);
     }
 
     private Channel connectRemote() throws Exception {
@@ -166,24 +166,24 @@ public class TcpConnection implements Runnable {
         return currentSequenceNumber;
     }
 
-    public AtomicInteger getWindowSize() {
-        return windowSize;
+    public AtomicInteger getCurrentWindowSize() {
+        return currentWindowSize;
     }
 
     public void run() {
         Executors.newSingleThreadExecutor().execute(() -> {
             while (this.status.get() != TcpConnectionStatus.CLOSED) {
-                synchronized (this.windowSize) {
+                synchronized (this.currentWindowSize) {
                     ByteBuf deviceInboundBuf = this.deviceInboundBufQueue.poll();
                     while (deviceInboundBuf != null) {
-                        this.windowSize.getAndAdd(deviceInboundBuf.readableBytes());
+                        this.currentWindowSize.getAndAdd(deviceInboundBuf.readableBytes());
                         if (this.remoteChannel != null) {
                             this.remoteChannel.writeAndFlush(deviceInboundBuf);
                         }
                         deviceInboundBuf = this.deviceInboundBufQueue.poll();
                     }
                     try {
-                        this.windowSize.wait();
+                        this.currentWindowSize.wait();
                     } catch (InterruptedException e) {
                         Log.e(TcpConnection.class.getName(),
                                 ">>>>>>>> Exception happen when waiting for window size change, current connection:" +
@@ -198,7 +198,7 @@ public class TcpConnection implements Runnable {
                 if (tcpPacket == null) {
                     try {
                         synchronized (this.deviceInbound) {
-                            this.deviceInbound.wait();
+                            this.deviceInbound.wait(this.readFromDeviceTimeout);
                         }
                     } catch (Exception e) {
                         Log.e(TcpConnection.class.getName(),
@@ -415,32 +415,32 @@ public class TcpConnection implements Runnable {
     }
 
     private void writeDataToRemote(TcpPacket tcpPacket) throws IOException {
-        synchronized (this.windowSize) {
+        synchronized (this.currentWindowSize) {
             int dataLength = tcpPacket.getData().length;
             this.currentAcknowledgementNumber.addAndGet(dataLength);
-            int nextWindowSize = this.windowSize.get() - dataLength;
+            int nextWindowSize = this.currentWindowSize.get() - dataLength;
             if (nextWindowSize < 0) {
                 Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpPacket.getHeader().isPsh() +
                         ") and put device data into device receive buffer, current connection:  " + this +
                         ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) + " , device data size: " +
-                        tcpPacket.getData().length + ", window size: " + this.windowSize.get() + ", write data: \n\n" +
+                        tcpPacket.getData().length + ", window size: " + this.currentWindowSize.get() + ", write data: \n\n" +
                         ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(tcpPacket.getData())) + "\n\n");
-                this.writeAckToDevice(null, this.windowSize.get());
+                this.writeAckToDevice(null, this.currentWindowSize.get());
                 return;
             }
             Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpPacket.getHeader().isPsh() +
                     ") and put device data into device receive buffer, current connection:  " + this +
                     ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) + " , device data size: " +
-                    tcpPacket.getData().length + ", window size: " + this.windowSize + ", write data: \n\n" +
+                    tcpPacket.getData().length + ", window size: " + this.currentWindowSize + ", write data: \n\n" +
                     ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(tcpPacket.getData())) + "\n\n");
             boolean offerResult = this.deviceInboundBufQueue.offer(Unpooled.wrappedBuffer(tcpPacket.getData()));
             if (!offerResult) {
-                this.writeAckToDevice(null, this.windowSize.get());
+                this.writeAckToDevice(null, this.currentWindowSize.get());
                 return;
             }
-            this.windowSize.getAndAdd(-1 * dataLength);
-            this.writeAckToDevice(null, this.windowSize.get());
-            this.windowSize.notify();
+            this.currentWindowSize.getAndAdd(-1 * dataLength);
+            this.writeAckToDevice(null, this.currentWindowSize.get());
+            this.currentWindowSize.notify();
         }
     }
 

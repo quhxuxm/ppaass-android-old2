@@ -64,6 +64,7 @@ public class MainActivity extends AppCompatActivity {
                                 testOutput.write(data.toString().getBytes());
                                 testOutput.write("\n\n".getBytes());
                                 testOutput.flush();
+                                Log.d(MainActivity.class.getName(),"Finish output !!!!!");
                             } catch (Exception e) {
                                 Log.e(MainActivity.class.getName(), "Exception happen for write data to server.", e);
                             } finally {
@@ -76,12 +77,12 @@ public class MainActivity extends AppCompatActivity {
                                     byte[] readBuf = new byte[1024];
                                     int readSize = testInput.read(readBuf);
                                     if (readSize <= 0) {
-                                        Log.d(MainActivity.class.getName(), "Nothing read from server.");
+                                        Log.d(MainActivity.class.getName(),"Finish input !!!!!");
                                         return;
                                     }
                                     byte[] readBufData = Arrays.copyOf(readBuf, readSize);
                                     String data = new String(readBufData);
-                                    Log.d(MainActivity.class.getName(), "Read data from server:\n" + data + "\n");
+                                    Log.v(MainActivity.class.getName(), "Read data from server:\n" + data + "\n");
                                 }
                             } catch (Exception e) {
                                 Log.e(MainActivity.class.getName(), "Exception happen for read data from server.", e);
@@ -90,6 +91,7 @@ public class MainActivity extends AppCompatActivity {
                             }
                         });
                         countDownLatch.await();
+                        Log.d(MainActivity.class.getName(),"Finish testing !!!!!");
                     } catch (Exception e) {
                         Log.e(MainActivity.class.getName(), "Exception happen for testing.", e);
                     }

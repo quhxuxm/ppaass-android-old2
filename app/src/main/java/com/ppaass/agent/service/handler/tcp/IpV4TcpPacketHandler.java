@@ -44,7 +44,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
     }
     private Bootstrap createBootstrap() {
         Bootstrap result = new Bootstrap();
-        result.group(new NioEventLoopGroup(1));
+        result.group(new NioEventLoopGroup(128));
         result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
         result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000);
         result.option(ChannelOption.SO_TIMEOUT, 5000);
