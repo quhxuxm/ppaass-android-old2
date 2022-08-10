@@ -54,7 +54,7 @@ public class TcpConnection implements Runnable {
     private final AtomicLong deviceInitialSequenceNumber;
     private final AtomicLong vpnInitialSequenceNumber;
     //    private final Thread writeToDeviceTask;
-//    private final Runnable waitTime2MslTask;
+    private final Runnable waitTime2MslTask;
     private final long writeToDeviceTimeout;
     private final long readFromDeviceTimeout;
     private final BlockingQueue<ByteBuf> deviceInboundBufQueue;
@@ -79,20 +79,20 @@ public class TcpConnection implements Runnable {
         this.remoteBootstrap = remoteBootstrap;
         this.deviceInboundBufQueue = new LinkedBlockingQueue<>();
         this.currentWindowSize = new AtomicInteger(IVpnConst.TCP_WINDOW);
-//        this.waitTime2MslTask = new Runnable() {
-//            @Override
-//            public void run() {
-//                synchronized (this) {
-//                    try {
-//                        this.wait(2 * 60 * 1000);
-//                    } catch (InterruptedException e) {
-//                        Log.e(TcpConnection.class.getName(), "Fail to execute waite time 2 msl task.", e);
-//                    } finally {
-//                        TcpConnection.this.finallyCloseTcpConnection();
-//                    }
-//                }
-//            }
-//        };
+        this.waitTime2MslTask = new Runnable() {
+            @Override
+            public void run() {
+                synchronized (this) {
+                    try {
+                        this.wait(2 * 60 * 1000);
+                    } catch (InterruptedException e) {
+                        Log.e(TcpConnection.class.getName(), "Fail to execute waite time 2 msl task.", e);
+                    } finally {
+                        TcpConnection.this.finallyCloseTcpConnection();
+                    }
+                }
+            }
+        };
     }
 
     private int generateVpnInitialSequenceNumber() {
@@ -254,6 +254,8 @@ public class TcpConnection implements Runnable {
                             return;
                         }
                         if (this.status.get() == TcpConnectionStatus.CLOSED) {
+                            this.writeRstToDevice();
+                            this.finallyCloseTcpConnection();
                             return;
                         }
                         //Receive Fin on established status.
@@ -283,7 +285,7 @@ public class TcpConnection implements Runnable {
                         this.currentAcknowledgementNumber.incrementAndGet();
                         this.writeAckToDevice(null, 0);
                         // TODO should make 2msl close, here just close directly
-                        this.finallyCloseTcpConnection();
+                        Executors.newSingleThreadExecutor().execute(this.waitTime2MslTask);
                         Log.d(TcpConnection.class.getName(),
                                 ">>>>>>>> Receive fin ack on FIN_WAIT2 and start 2msl task, current connection:  " +
                                         this + ", incoming tcp packet: " + this.printTcpPacket(tcpPacket));
@@ -423,7 +425,8 @@ public class TcpConnection implements Runnable {
                 Log.d(TcpConnection.class.getName(), ">>>>>>>> Receive ACK - (PSH=" + tcpPacket.getHeader().isPsh() +
                         ") and put device data into device receive buffer, current connection:  " + this +
                         ", incoming tcp packet: " + this.printTcpPacket(tcpPacket) + " , device data size: " +
-                        tcpPacket.getData().length + ", window size: " + this.currentWindowSize.get() + ", write data: \n\n" +
+                        tcpPacket.getData().length + ", window size: " + this.currentWindowSize.get() +
+                        ", write data: \n\n" +
                         ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(tcpPacket.getData())) + "\n\n");
                 this.writeAckToDevice(null, this.currentWindowSize.get());
                 return;
