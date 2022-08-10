@@ -44,13 +44,13 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
     }
     private Bootstrap createBootstrap() {
         Bootstrap result = new Bootstrap();
-        result.group(new NioEventLoopGroup(128));
+        result.group(new NioEventLoopGroup(32));
         result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
-        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000);
-        result.option(ChannelOption.SO_TIMEOUT, 5000);
-        result.option(ChannelOption.SO_KEEPALIVE, true);
+        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 20000);
+        result.option(ChannelOption.SO_TIMEOUT, 20000);
+        result.option(ChannelOption.SO_KEEPALIVE, false);
         result.option(ChannelOption.AUTO_READ, true);
-        result.option(ChannelOption.AUTO_CLOSE, true);
+        result.option(ChannelOption.AUTO_CLOSE, false);
         result.option(ChannelOption.TCP_NODELAY, true);
         result.option(ChannelOption.SO_REUSEADDR, true);
         result.handler(new ChannelInitializer<NioSocketChannel>() {

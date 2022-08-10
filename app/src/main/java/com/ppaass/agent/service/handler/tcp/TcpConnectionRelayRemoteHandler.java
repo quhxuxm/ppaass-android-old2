@@ -72,6 +72,10 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
+        if (tcpConnection != null) {
+            tcpConnection.writeRstToDevice();
+            tcpConnection.finallyCloseTcpConnection();
+        }
         Log.e(TcpConnection.class.getName(),
                 "<<<<---- Exception happen, current connection: " +
                         tcpConnection, cause);

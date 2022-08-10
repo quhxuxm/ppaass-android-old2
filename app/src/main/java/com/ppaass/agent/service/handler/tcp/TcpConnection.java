@@ -105,17 +105,19 @@ public class TcpConnection implements Runnable {
         this.deviceInboundBufQueue.clear();
         synchronized (this.currentWindowSize) {
             this.currentWindowSize.notify();
+            this.currentWindowSize.set(0);
         }
         synchronized (this.deviceInbound) {
             this.deviceInbound.notify();
         }
         try {
             if (remoteChannel != null) {
-                this.remoteChannel.close();
+                this.remoteChannel.close().sync();
             }
         } catch (Exception e) {
             Log.e(TcpConnection.class.getName(),
-                    ">>>>>>>> Fail to close remote channel, current connection: " + this + ", device inbound size: " +
+                    ">>>>>>>> Fail to close remote channel, current connection: " + this +
+                            ", device inbound size: " +
                             deviceInbound.size(), e);
         }
         this.connectionRepository.remove(this.repositoryKey);
@@ -198,7 +200,10 @@ public class TcpConnection implements Runnable {
                 if (tcpPacket == null) {
                     try {
                         synchronized (this.deviceInbound) {
-                            this.deviceInbound.wait(this.readFromDeviceTimeout);
+                            this.deviceInbound.wait(5000);
+                            if (this.status.get() == TcpConnectionStatus.CLOSED) {
+                                return;
+                            }
                         }
                     } catch (Exception e) {
                         Log.e(TcpConnection.class.getName(),
