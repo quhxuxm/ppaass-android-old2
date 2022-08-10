@@ -57,7 +57,8 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
             int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
             byte[] mssData = new byte[mssDataLength];
             remoteDataBuf.readBytes(mssData);
-            tcpConnection.writeAckToDevice(mssData);
+            int windowSize = tcpConnection.getWindowSize().get();
+            tcpConnection.writeAckToDevice(mssData, windowSize);
             // Data should write to device first then increase the sequence number
             tcpConnection.getCurrentSequenceNumber().addAndGet(mssData.length);
             Log.d(TcpConnection.class.getName(),
