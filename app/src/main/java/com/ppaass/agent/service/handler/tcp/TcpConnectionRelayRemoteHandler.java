@@ -18,10 +18,18 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         if (tcpConnection == null) {
+            ctx.close();
+            return;
+        }
+        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
+            Log.d(TcpConnection.class.getName(),
+                    "<<<<---- Tcp connection closed already, current connection:  " +
+                            tcpConnection);
+            ctx.close();
             return;
         }
         Log.d(TcpConnection.class.getName(),
-                "<<<<---- Tcp connection connected, current connection:  " +
+                "<<<<---- Tcp connection connected, begin to relay remote data to device, current connection:  " +
                         tcpConnection);
     }
 
@@ -30,6 +38,14 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         if (tcpConnection == null) {
+            ctx.close();
+            return;
+        }
+        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
+            Log.d(TcpConnection.class.getName(),
+                    "<<<<---- Tcp connection CLOSED already, current connection:  " +
+                            tcpConnection);
+            ctx.close();
             return;
         }
         if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED_WAIT) {
@@ -47,11 +63,16 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         if (tcpConnection == null) {
+            ctx.close();
             return;
         }
-        Log.d(TcpConnection.class.getName(),
-                "<<<<---- Connection in establish status, begin to relay remote data to device, current connection: " +
-                        tcpConnection);
+        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
+            Log.d(TcpConnection.class.getName(),
+                    "<<<<---- Connection in closed status, stop relay remote data to device, current connection: " +
+                            tcpConnection);
+            ctx.close();
+            return;
+        }
         //Relay remote data to device and use mss as the transfer unit
         while (remoteDataBuf.isReadable()) {
             int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
@@ -69,15 +90,29 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
     }
 
     @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
+        TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
+        if (tcpConnection == null) {
+            ctx.close();
+            return;
+        }
+        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
+            tcpConnection.finallyCloseTcpConnection();
+        }
+    }
+
+    @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
-        if (tcpConnection != null) {
-            tcpConnection.writeRstToDevice();
-            tcpConnection.finallyCloseTcpConnection();
-        }
         Log.e(TcpConnection.class.getName(),
                 "<<<<---- Exception happen, current connection: " +
                         tcpConnection, cause);
+        if (tcpConnection != null) {
+            tcpConnection.writeRstToDevice();
+            ctx.close();
+            tcpConnection.finallyCloseTcpConnection();
+        }
     }
 }
