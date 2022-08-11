@@ -21,16 +21,18 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
             ctx.close();
             return;
         }
-        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
+        synchronized (tcpConnection) {
+            if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
+                Log.d(TcpConnection.class.getName(),
+                        "<<<<---- Tcp connection closed already, current connection:  " +
+                                tcpConnection);
+                ctx.close();
+                return;
+            }
             Log.d(TcpConnection.class.getName(),
-                    "<<<<---- Tcp connection closed already, current connection:  " +
+                    "<<<<---- Tcp connection connected, begin to relay remote data to device, current connection:  " +
                             tcpConnection);
-            ctx.close();
-            return;
         }
-        Log.d(TcpConnection.class.getName(),
-                "<<<<---- Tcp connection connected, begin to relay remote data to device, current connection:  " +
-                        tcpConnection);
     }
 
     @Override
@@ -41,20 +43,22 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
             ctx.close();
             return;
         }
-        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
-            Log.d(TcpConnection.class.getName(),
-                    "<<<<---- Tcp connection CLOSED already, current connection:  " +
-                            tcpConnection);
-            ctx.close();
-            return;
-        }
-        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED_WAIT) {
-            tcpConnection.writeFinAckToDevice();
-            tcpConnection.setStatus(TcpConnectionStatus.LAST_ACK);
-            tcpConnection.getCurrentSequenceNumber().incrementAndGet();
-            Log.d(TcpConnection.class.getName(),
-                    "<<<<---- Move tcp connection from CLOSED_WAIT to  LAST_ACK, current connection:  " +
-                            tcpConnection);
+        synchronized (tcpConnection) {
+            if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
+                Log.d(TcpConnection.class.getName(),
+                        "<<<<---- Tcp connection CLOSED already, current connection:  " +
+                                tcpConnection);
+                ctx.close();
+                return;
+            }
+            if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED_WAIT) {
+                tcpConnection.writeFinAckToDevice();
+                tcpConnection.setStatus(TcpConnectionStatus.LAST_ACK);
+                tcpConnection.setCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber() + 1);
+                Log.d(TcpConnection.class.getName(),
+                        "<<<<---- Move tcp connection from CLOSED_WAIT to  LAST_ACK, current connection:  " +
+                                tcpConnection);
+            }
         }
     }
 
@@ -66,26 +70,30 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
             ctx.close();
             return;
         }
-        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
-            Log.d(TcpConnection.class.getName(),
-                    "<<<<---- Connection in closed status, stop relay remote data to device, current connection: " +
-                            tcpConnection);
-            ctx.close();
-            return;
-        }
-        //Relay remote data to device and use mss as the transfer unit
-        while (remoteDataBuf.isReadable()) {
-            int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
-            byte[] mssData = new byte[mssDataLength];
-            remoteDataBuf.readBytes(mssData);
-            int windowSize = tcpConnection.getCurrentWindowSize().get();
-            tcpConnection.writeAckToDevice(mssData, windowSize);
-            // Data should write to device first then increase the sequence number
-            tcpConnection.getCurrentSequenceNumber().addAndGet(mssData.length);
-            Log.d(TcpConnection.class.getName(),
-                    "<<<<---- Receive remote data write ack to device, current connection: " +
-                            tcpConnection + ", remote data size: " + mssData.length +
-                            ", remote data:\n\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(mssData)) + "\n\n");
+        synchronized (tcpConnection) {
+            if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
+                Log.d(TcpConnection.class.getName(),
+                        "<<<<---- Connection in closed status, stop relay remote data to device, current connection: " +
+                                tcpConnection);
+                ctx.close();
+                return;
+            }
+            //Relay remote data to device and use mss as the transfer unit
+            while (remoteDataBuf.isReadable()) {
+                int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
+                byte[] mssData = new byte[mssDataLength];
+                remoteDataBuf.readBytes(mssData);
+                int windowSize = tcpConnection.getCurrentWindowSize();
+                tcpConnection.writeAckToDevice(mssData, windowSize);
+                // Data should write to device first then increase the sequence number
+                tcpConnection.setCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber() + mssData.length);
+                Log.d(TcpConnection.class.getName(),
+                        "<<<<---- Receive remote data write ack to device, current connection: " +
+                                tcpConnection + ", remote data size: " + mssData.length);
+                Log.v(TcpConnection.class.getName(),
+                        "<<<<---- Remote data:\n\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(mssData)) +
+                                "\n\n");
+            }
         }
     }
 
