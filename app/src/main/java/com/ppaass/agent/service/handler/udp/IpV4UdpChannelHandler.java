@@ -30,20 +30,22 @@ public class IpV4UdpChannelHandler extends SimpleChannelInboundHandler<DatagramP
         AttributeKey<Integer> udpSourcePortKey = AttributeKey.valueOf(IVpnConst.UDP_SOURCE_PORT);
         Integer udpSourcePort = ctx.channel().attr(udpSourcePortKey).get();
         if (udpSourcePort == null) {
-            Log.e(IpV4UdpPacketHandler.class.getName(), "Fail to get udp source port from channel.");
+            Log.e(IpV4UdpChannelHandler.class.getName(), "Fail to get udp source port from channel.");
             return;
         }
         AttributeKey<byte[]> udpSourceAddrKey = AttributeKey.valueOf(IVpnConst.UDP_SOURCE_ADDR);
         byte[] udpSourceAddr = ctx.channel().attr(udpSourceAddrKey).get();
         if (udpSourceAddr == null) {
-            Log.e(IpV4UdpPacketHandler.class.getName(), "Fail to get udp source address from channel.");
+            Log.e(IpV4UdpChannelHandler.class.getName(), "Fail to get udp source address from channel.");
             return;
         }
         InetSocketAddress udpDstAddress = msg.sender();
         ByteBuf remoteToDeviceUdpPacketContent = msg.content();
-        Log.d(IpV4UdpPacketHandler.class.getName(),
+        Log.d(IpV4UdpChannelHandler.class.getName(),
                 "Success receive remote udp packet [" + udpResponseId + "], destination: " +
-                        udpDstAddress + ", udp content received:\n\n" +
+                        udpDstAddress);
+        Log.v(IpV4UdpChannelHandler.class.getName(),
+                "Udp content received:\n\n" +
                         ByteBufUtil.prettyHexDump(remoteToDeviceUdpPacketContent) + "\n\n");
         while (remoteToDeviceUdpPacketContent.isReadable()) {
             int contentLength = Math.min(IVpnConst.MTU - IVpnConst.UDP_HEADER_LENGTH,

@@ -125,6 +125,7 @@ public class TcpConnection implements Runnable {
                                 deviceInbound.size(), e);
             }
         }
+        this.remoteBootstrap.config().group().shutdownGracefully();
         this.connectionRepository.remove(this.repositoryKey);
     }
 

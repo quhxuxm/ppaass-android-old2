@@ -26,18 +26,13 @@ import java.net.InetSocketAddress;
 public class IpV4UdpPacketHandler {
     private final OutputStream rawDeviceOutputStream;
     private final VpnService vpnService;
-    private final Channel udpChannel;
+    private final Bootstrap udpBootstrap;
 
     public IpV4UdpPacketHandler(OutputStream rawDeviceOutputStream, VpnService vpnService)
             throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
-        Bootstrap udpBootstrap = this.createBootstrap();
-        try {
-            this.udpChannel = udpBootstrap.bind(0).sync().channel();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        this.udpBootstrap = this.createBootstrap();
     }
 
     private Bootstrap createBootstrap() {
@@ -62,7 +57,7 @@ public class IpV4UdpPacketHandler {
 
     public void handle(UdpPacket udpPacket, IpV4Header ipV4Header) throws InterruptedException {
         try {
-            Log.d(IpV4UdpPacketHandler.class.getName(), udpPacket.toString());
+            Channel udpChannel = udpBootstrap.bind(0).sync().channel();
             InetAddress destinationAddress =
                     InetAddress.getByAddress(ipV4Header.getDestinationAddress());
             int destinationPort = udpPacket.getHeader().getDestinationPort();
@@ -80,16 +75,18 @@ public class IpV4UdpPacketHandler {
                 if (future.isSuccess()) {
                     Log.d(IpV4UdpPacketHandler.class.getName(),
                             "Success to send udp packet to remote: " + udpPacket + ", destination: " +
-                                    deviceToRemoteDestinationAddress + ", udp content going to send:\n\n" +
-                                    ByteBufUtil.prettyHexDump(udpPacketDataForLog) +
-                                    "\n\n");
+                                    deviceToRemoteDestinationAddress);
+                    Log.v(IpV4UdpPacketHandler.class.getName(), "Udp content going to send[SUCCESS]:\n\n" +
+                            ByteBufUtil.prettyHexDump(udpPacketDataForLog) +
+                            "\n\n");
                     return;
                 }
                 Log.d(IpV4UdpPacketHandler.class.getName(),
                         "Fail to send udp packet to remote: " + udpPacket + ", destination: " +
-                                deviceToRemoteDestinationAddress + ", udp content going to send:\n\n" +
-                                ByteBufUtil.prettyHexDump(udpPacketDataForLog) +
-                                "\n\n", future.cause());
+                                deviceToRemoteDestinationAddress);
+                Log.v(IpV4UdpPacketHandler.class.getName(), "Udp content going to send[FAIL]:\n\n" +
+                        ByteBufUtil.prettyHexDump(udpPacketDataForLog) +
+                        "\n\n");
             });
         } catch (Exception e) {
             Log.e(IpV4UdpPacketHandler.class.getName(),
