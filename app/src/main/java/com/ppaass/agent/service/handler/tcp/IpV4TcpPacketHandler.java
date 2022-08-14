@@ -3,14 +3,12 @@ package com.ppaass.agent.service.handler.tcp;
 import android.net.VpnService;
 import android.util.Log;
 import com.ppaass.agent.protocol.general.ip.*;
-import com.ppaass.agent.protocol.general.tcp.TcpHeader;
-import com.ppaass.agent.protocol.general.tcp.TcpPacket;
-import com.ppaass.agent.protocol.general.tcp.TcpPacketReader;
-import com.ppaass.agent.protocol.general.tcp.TcpPacketWriter;
+import com.ppaass.agent.protocol.general.tcp.*;
+import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.handler.TcpIpPacketWriter;
 
+import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Random;
@@ -21,17 +19,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
     private static final Random RANDOM = new Random();
-    private final OutputStream rawDeviceOutputStream;
+    private static final AtomicInteger TIMESTAMP = new AtomicInteger();
+    private final FileOutputStream rawDeviceOutputStream;
     private final Map<TcpConnectionRepositoryKey, TcpConnection> connectionRepository;
     private final VpnService vpnService;
     private final ExecutorService connectionThreadPool;
     private final AtomicInteger ipIdentifier;
 
-    public IpV4TcpPacketHandler(OutputStream rawDeviceOutputStream, VpnService vpnService) {
+    public IpV4TcpPacketHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService) {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
         this.connectionRepository = new ConcurrentHashMap<>();
-        this.connectionThreadPool = Executors.newWorkStealingPool(32);
+        this.connectionThreadPool = Executors.newWorkStealingPool(128);
         this.ipIdentifier = new AtomicInteger(RANDOM.nextInt(Short.MAX_VALUE * 2 + 2));
     }
 
@@ -80,8 +79,111 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
                         ipV4Header);
     }
 
-    @Override
-    public void write(TcpConnection tcpConnection, TcpPacket tcpPacket) throws IOException {
+    public void writeSyncAckToDevice(TcpConnection connection, long sequenceNumber, long acknowledgementNumber) {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.syn(true);
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
+        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
+        TcpPacket tcpPacket =
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+        try {
+            this.write(connection, tcpPacket);
+        } catch (IOException e) {
+            Log.e(TcpConnection.class.getName(),
+                    "Fail to write sync ack tcp packet to device outbound queue because of error.", e);
+        }
+    }
+
+    public void writeAckToDevice(byte[] ackData, TcpConnection connection, long sequenceNumber,
+                                 long acknowledgementNumber) {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        tcpPacketBuilder.data(ackData);
+        TcpPacket tcpPacket =
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+        try {
+            this.write(connection, tcpPacket);
+        } catch (IOException e) {
+            Log.e(TcpConnection.class.getName(),
+                    "Fail to write ack tcp packet to device outbound queue because of error.", e);
+        }
+    }
+
+    public void writeRstToDevice(TcpConnection connection, long sequenceNumber,
+                                 long acknowledgementNumber) {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.rst(true);
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        TcpPacket tcpPacket =
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+        try {
+            this.write(connection, tcpPacket);
+        } catch (IOException e) {
+            Log.e(TcpConnection.class.getName(),
+                    "Fail to write rst tcp packet to device outbound queue because of error.", e);
+        }
+    }
+
+    public void writeFinAckToDevice(TcpConnection connection, long sequenceNumber,
+                                    long acknowledgementNumber) {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.ack(true);
+        tcpPacketBuilder.fin(true);
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        TcpPacket tcpPacket =
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+        try {
+            this.write(connection, tcpPacket);
+        } catch (IOException e) {
+            Log.e(TcpConnection.class.getName(),
+                    "Fail to write fin ack tcp packet to device outbound queue because of error.", e);
+        }
+    }
+
+    public void writeFinToDevice(TcpConnection connection, long sequenceNumber,
+                                 long acknowledgementNumber) {
+        TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
+        tcpPacketBuilder.fin(true);
+        tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
+        TcpPacket tcpPacket =
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+        try {
+            this.write(connection, tcpPacket);
+        } catch (IOException e) {
+            Log.e(TcpConnection.class.getName(),
+                    "Fail to write fin tcp packet to device outbound queue because of error.", e);
+        }
+    }
+
+    private TcpPacket buildCommonTcpPacket(TcpPacketBuilder tcpPacketBuilder, TcpConnection connection,
+                                           long sequenceNumber,
+                                           long acknowledgementNumber) {
+        tcpPacketBuilder.destinationPort(connection.getRepositoryKey().getSourcePort());
+        tcpPacketBuilder.sourcePort(connection.getRepositoryKey().getDestinationPort());
+        tcpPacketBuilder.sequenceNumber(sequenceNumber);
+        tcpPacketBuilder.acknowledgementNumber(acknowledgementNumber);
+        ByteBuffer mssBuffer = ByteBuffer.allocateDirect(2);
+        mssBuffer.putShort(IVpnConst.TCP_MSS);
+        mssBuffer.flip();
+        byte[] mssBytes = new byte[2];
+        mssBuffer.get(mssBytes);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssBytes));
+        int timestamp = TIMESTAMP.getAndIncrement();
+        ByteBuffer timestampBuffer = ByteBuffer.allocateDirect(4);
+        timestampBuffer.putInt(timestamp);
+        timestampBuffer.flip();
+        byte[] timestampBytes = new byte[4];
+        timestampBuffer.get(timestampBytes);
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampBytes));
+        return tcpPacketBuilder.build();
+    }
+
+    private void write(TcpConnection tcpConnection, TcpPacket tcpPacket) throws IOException {
         IpPacketBuilder ipPacketBuilder = new IpPacketBuilder();
         IpV4HeaderBuilder ipV4HeaderBuilder = new IpV4HeaderBuilder();
         ipV4HeaderBuilder.identification(this.ipIdentifier.incrementAndGet());

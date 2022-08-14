@@ -13,22 +13,24 @@ import com.ppaass.agent.service.handler.icmp.IpV4IcmpPacketHandler;
 import com.ppaass.agent.service.handler.tcp.IpV4TcpPacketHandler;
 import com.ppaass.agent.service.handler.udp.IpV4UdpPacketHandler;
 
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.Arrays;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.concurrent.Executors;
 
 public class IpPacketHandler {
-    private final InputStream rawDeviceInputStream;
+    private final FileChannel rawDeviceInputChannel;
     private final int readBufferSize;
     private final IpV4TcpPacketHandler ipV4TcpPacketHandler;
     private final IpV4UdpPacketHandler ipV4UdpPacketHandler;
     private final IpV4IcmpPacketHandler ipV4IcmpPacketHandler;
     private final PpaassVpnService vpnService;
 
-    public IpPacketHandler(InputStream rawDeviceInputStream, OutputStream rawDeviceOutputStream, int readBufferSize,
+    public IpPacketHandler(FileInputStream rawDeviceInputStream, FileOutputStream rawDeviceOutputStream,
+                           int readBufferSize,
                            PpaassVpnService vpnService) throws Exception {
-        this.rawDeviceInputStream = rawDeviceInputStream;
+        this.rawDeviceInputChannel = rawDeviceInputStream.getChannel();
         this.readBufferSize = readBufferSize;
         this.vpnService = vpnService;
         this.ipV4TcpPacketHandler = new IpV4TcpPacketHandler(rawDeviceOutputStream, vpnService);
@@ -37,7 +39,7 @@ public class IpPacketHandler {
     }
 
     public void start() {
-        Executors.newSingleThreadExecutor().execute(() -> {
+        Executors.newWorkStealingPool().execute(() -> {
             while (IpPacketHandler.this.vpnService.isRunning()) {
                 try {
                     IpPacket ipPacket = IpPacketHandler.this.read();
@@ -94,20 +96,24 @@ public class IpPacketHandler {
     }
 
     private IpPacket read() {
-        byte[] buffer = new byte[this.readBufferSize];
+        ByteBuffer deviceInputBuffer = ByteBuffer.allocateDirect(this.readBufferSize);
         try {
-            int size = this.rawDeviceInputStream.read(buffer);
+            int size = this.rawDeviceInputChannel.read(deviceInputBuffer);
             if (size <= 0) {
                 Log.d(IpPacketHandler.class.getName(),
                         "Nothing to read from raw input stream because of read size: " + size);
                 return null;
             }
-            buffer = Arrays.copyOf(buffer, size);
+            deviceInputBuffer.flip();
+            byte[] buffer = new byte[deviceInputBuffer.remaining()];
+            deviceInputBuffer.get(buffer);
             return IpPacketReader.INSTANCE.parse(buffer);
         } catch (Exception e) {
             Log.e(IpPacketHandler.class.getName(),
                     "Fail to read ip packet from raw input stream because of exception.", e);
             throw new RuntimeException(e);
+        } finally {
+            deviceInputBuffer.clear();
         }
     }
 }

@@ -47,7 +47,7 @@ public class MainActivity extends AppCompatActivity {
         testVpnButton.setOnClickListener(view -> {
             testThreadPool.execute(() -> {
                 for (int j = 0; j < 1; j++) {
-                    CountDownLatch countDownLatch = new CountDownLatch(1);
+                    CountDownLatch countDownLatch = new CountDownLatch(2);
                     try (Socket testSocket = new Socket()) {
                         testSocket.connect(new InetSocketAddress("192.168.31.200", 65533));
                         OutputStream testOutput = testSocket.getOutputStream();
@@ -64,34 +64,34 @@ public class MainActivity extends AppCompatActivity {
                                 testOutput.write(data.toString().getBytes());
                                 testOutput.write("\n\n".getBytes());
                                 testOutput.flush();
-                                Log.d(MainActivity.class.getName(),"Finish output !!!!!");
+                                Log.d(MainActivity.class.getName(), "Finish output !!!!!");
                             } catch (Exception e) {
                                 Log.e(MainActivity.class.getName(), "Exception happen for write data to server.", e);
                             } finally {
                                 countDownLatch.countDown();
                             }
                         });
-//                        testThreadPool.execute(() -> {
-//                            try {
-//                                while (true) {
-//                                    byte[] readBuf = new byte[1024];
-//                                    int readSize = testInput.read(readBuf);
-//                                    if (readSize <= 0) {
-//                                        Log.d(MainActivity.class.getName(),"Finish input !!!!!");
-//                                        return;
-//                                    }
-//                                    byte[] readBufData = Arrays.copyOf(readBuf, readSize);
-//                                    String data = new String(readBufData);
-//                                    Log.v(MainActivity.class.getName(), "Read data from server:\n" + data + "\n");
-//                                }
-//                            } catch (Exception e) {
-//                                Log.e(MainActivity.class.getName(), "Exception happen for read data from server.", e);
-//                            } finally {
-//                                countDownLatch.countDown();
-//                            }
-//                        });
+                        testThreadPool.execute(() -> {
+                            try {
+                                while (true) {
+                                    byte[] readBuf = new byte[1024];
+                                    int readSize = testInput.read(readBuf);
+                                    if (readSize <= 0) {
+                                        Log.d(MainActivity.class.getName(), "Finish input !!!!!");
+                                        return;
+                                    }
+                                    byte[] readBufData = Arrays.copyOf(readBuf, readSize);
+                                    String data = new String(readBufData);
+                                    Log.v(MainActivity.class.getName(), "Read data from server:\n" + data + "\n");
+                                }
+                            } catch (Exception e) {
+                                Log.e(MainActivity.class.getName(), "Exception happen for read data from server.", e);
+                            } finally {
+                                countDownLatch.countDown();
+                            }
+                        });
                         countDownLatch.await();
-                        Log.d(MainActivity.class.getName(),"Finish testing !!!!!");
+                        Log.d(MainActivity.class.getName(), "Finish testing !!!!!");
                     } catch (Exception e) {
                         Log.e(MainActivity.class.getName(), "Exception happen for testing.", e);
                     }

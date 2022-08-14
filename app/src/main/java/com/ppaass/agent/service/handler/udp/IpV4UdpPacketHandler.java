@@ -19,16 +19,17 @@ import io.netty.channel.socket.DatagramChannel;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.util.AttributeKey;
 
+import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 
 public class IpV4UdpPacketHandler {
-    private final OutputStream rawDeviceOutputStream;
+    private final FileOutputStream rawDeviceOutputStream;
     private final VpnService vpnService;
     private final Bootstrap udpBootstrap;
 
-    public IpV4UdpPacketHandler(OutputStream rawDeviceOutputStream, VpnService vpnService)
+    public IpV4UdpPacketHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService)
             throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
