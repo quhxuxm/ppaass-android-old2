@@ -63,7 +63,13 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
             this.tcpIpPacketWriter.writeAckToDevice(mssData, tcpConnection,
                     tcpConnection.getCurrentSequenceNumber(), tcpConnection.getCurrentAcknowledgementNumber());
             // Data should write to device first then increase the sequence number
-            tcpConnection.setCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber() + mssData.length);
+            if (!tcpConnection.compareAndSetCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber(),
+                    tcpConnection.getCurrentSequenceNumber() + mssData.length)) {
+                Log.e(TcpConnection.class.getName(),
+                        "<<<<---- Fail to receive remote data write ack to device because of concurrent set on connection sequence, current connection: " +
+                                tcpConnection + ", remote data size: " + mssData.length);
+                return;
+            }
             Log.d(TcpConnection.class.getName(),
                     "<<<<---- Receive remote data write ack to device, current connection: " +
                             tcpConnection + ", remote data size: " + mssData.length);

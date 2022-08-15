@@ -39,7 +39,7 @@ public class IpPacketHandler {
     }
 
     public void start() {
-        Executors.newWorkStealingPool().execute(() -> {
+        Executors.newWorkStealingPool(8).execute(() -> {
             while (IpPacketHandler.this.vpnService.isRunning()) {
                 try {
                     IpPacket ipPacket = IpPacketHandler.this.read();

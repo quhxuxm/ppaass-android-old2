@@ -30,7 +30,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
         this.connectionRepository = new ConcurrentHashMap<>();
-        this.connectionThreadPool = Executors.newWorkStealingPool(128);
+        this.connectionThreadPool = Executors.newWorkStealingPool(256);
         this.ipIdentifier = new AtomicInteger(RANDOM.nextInt(Short.MAX_VALUE * 2 + 2));
     }
 
@@ -85,7 +85,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         tcpPacketBuilder.syn(true);
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
         ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
-        mssByteBuffer.putShort(IVpnConst.TCP_MSS);
+        mssByteBuffer.putShort((short)(IVpnConst.TCP_MSS & 0xFFFF));
         tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
         TcpPacket tcpPacket =
                 this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
@@ -168,7 +168,7 @@ public class IpV4TcpPacketHandler implements TcpIpPacketWriter {
         tcpPacketBuilder.sequenceNumber(sequenceNumber);
         tcpPacketBuilder.acknowledgementNumber(acknowledgementNumber);
         ByteBuffer mssBuffer = ByteBuffer.allocateDirect(2);
-        mssBuffer.putShort(IVpnConst.TCP_MSS);
+        mssBuffer.putShort((short)(IVpnConst.TCP_MSS & 0xFFFF));
         mssBuffer.flip();
         byte[] mssBytes = new byte[2];
         mssBuffer.get(mssBytes);
