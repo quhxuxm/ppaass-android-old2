@@ -1,6 +1,9 @@
 package com.ppaass.agent.service.handler.tcp;
 
 import android.util.Log;
+import com.ppaass.agent.protocol.message.Message;
+import com.ppaass.agent.protocol.message.ProxyMessagePayload;
+import com.ppaass.agent.protocol.message.ProxyMessagePayloadType;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.handler.TcpIpPacketWriter;
 import io.netty.buffer.ByteBuf;
@@ -9,12 +12,16 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.util.AttributeKey;
+import io.netty.util.concurrent.Promise;
 
-public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler<ByteBuf> {
+public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
     private final TcpIpPacketWriter tcpIpPacketWriter;
+    private final Promise<Boolean> remoteConnectStatusPromise;
 
-    public TcpConnectionRelayRemoteHandler(TcpIpPacketWriter tcpIpPacketWriter) {
+    public TcpConnectionProxyMessageHandler(TcpIpPacketWriter tcpIpPacketWriter,
+                                            Promise<Boolean> remoteConnectStatusPromise) {
         this.tcpIpPacketWriter = tcpIpPacketWriter;
+        this.remoteConnectStatusPromise = remoteConnectStatusPromise;
     }
 
     @Override
@@ -52,30 +59,48 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
 //    }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, ByteBuf remoteDataBuf) {
+    protected void channelRead0(ChannelHandlerContext ctx, Message proxyMessage) {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         //Relay remote data to device and use mss as the transfer unit
-        while (remoteDataBuf.isReadable()) {
-            int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
-            byte[] mssData = new byte[mssDataLength];
-            remoteDataBuf.readBytes(mssData);
-            this.tcpIpPacketWriter.writeAckToDevice(mssData, tcpConnection,
-                    tcpConnection.getCurrentSequenceNumber(), tcpConnection.getCurrentAcknowledgementNumber());
-            // Data should write to device first then increase the sequence number
-            if (!tcpConnection.compareAndSetCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber(),
-                    tcpConnection.getCurrentSequenceNumber() + mssData.length)) {
-                Log.e(TcpConnection.class.getName(),
-                        "<<<<---- Fail to receive remote data write ack to device because of concurrent set on connection sequence, current connection: " +
+        byte[] proxyMessagePayloadBytes = proxyMessage.getPayload();
+        ProxyMessagePayload proxyMessagePayload =
+                PpaassMessageUtil.INSTANCE.parseProxyMessagePayloadBytes(proxyMessagePayloadBytes);
+        if (ProxyMessagePayloadType.TcpConnectSuccess == proxyMessagePayload.getPayloadType()) {
+            this.remoteConnectStatusPromise.setSuccess(true);
+            return;
+        }
+        if (ProxyMessagePayloadType.TcpConnectFail == proxyMessagePayload.getPayloadType()) {
+            this.remoteConnectStatusPromise.setFailure(new IllegalStateException("Proxy connect to remote fail"));
+            return;
+        }
+        if (ProxyMessagePayloadType.TcpData == proxyMessagePayload.getPayloadType()) {
+            ByteBuf remoteDataBuf = Unpooled.wrappedBuffer(proxyMessagePayload.getData());
+            while (remoteDataBuf.isReadable()) {
+                int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
+                byte[] mssData = new byte[mssDataLength];
+                remoteDataBuf.readBytes(mssData);
+                this.tcpIpPacketWriter.writeAckToDevice(mssData, tcpConnection,
+                        tcpConnection.getCurrentSequenceNumber(), tcpConnection.getCurrentAcknowledgementNumber());
+                // Data should write to device first then increase the sequence number
+                if (!tcpConnection.compareAndSetCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber(),
+                        tcpConnection.getCurrentSequenceNumber() + mssData.length)) {
+                    Log.e(TcpConnection.class.getName(),
+                            "<<<<---- Fail to receive remote data write ack to device because of concurrent set on connection sequence, current connection: " +
+                                    tcpConnection + ", remote data size: " + mssData.length);
+                    return;
+                }
+                Log.d(TcpConnection.class.getName(),
+                        "<<<<---- Receive remote data write ack to device, current connection: " +
                                 tcpConnection + ", remote data size: " + mssData.length);
-                return;
+                Log.v(TcpConnection.class.getName(),
+                        "<<<<---- Remote data:\n\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(mssData)) +
+                                "\n\n");
             }
-            Log.d(TcpConnection.class.getName(),
-                    "<<<<---- Receive remote data write ack to device, current connection: " +
-                            tcpConnection + ", remote data size: " + mssData.length);
-            Log.v(TcpConnection.class.getName(),
-                    "<<<<---- Remote data:\n\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(mssData)) +
-                            "\n\n");
+            return;
+        }
+        if (ProxyMessagePayloadType.HeartbeatSuccess == proxyMessagePayload.getPayloadType()) {
+            return;
         }
     }
 
@@ -83,7 +108,7 @@ public class TcpConnectionRelayRemoteHandler extends SimpleChannelInboundHandler
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
-        Log.d(TcpConnectionRelayRemoteHandler.class.getName(),
+        Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                 "<<<<---- Tcp connection remote channel closed, current connection: " + tcpConnection);
     }
 

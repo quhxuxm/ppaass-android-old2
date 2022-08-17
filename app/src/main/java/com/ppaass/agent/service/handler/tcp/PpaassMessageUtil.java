@@ -142,9 +142,26 @@ public class PpaassMessageUtil {
     public byte[] generateNetAddressBytes(NetAddress netAddress) {
         ByteBuf resultBuf = Unpooled.buffer();
         resultBuf.writeByte(netAddress.getType().getValue());
+        if (NetAddressType.IpV4 == netAddress.getType()) {
+            resultBuf.writeBytes(netAddress.getHost());
+            resultBuf.writeShort(netAddress.getPort());
+            byte[] result = new byte[resultBuf.readableBytes()];
+            resultBuf.readBytes(result);
+            return result;
+        }
+        if (NetAddressType.IpV6 == netAddress.getType()) {
+            resultBuf.writeBytes(netAddress.getHost());
+            resultBuf.writeShort(netAddress.getPort());
+            byte[] result = new byte[resultBuf.readableBytes()];
+            resultBuf.readBytes(result);
+            return result;
+        }
+        resultBuf.writeInt(netAddress.getHost().length);
         resultBuf.writeBytes(netAddress.getHost());
         resultBuf.writeShort(netAddress.getPort());
-        return resultBuf.array();
+        byte[] result = new byte[resultBuf.readableBytes()];
+        resultBuf.readBytes(result);
+        return result;
     }
 
     public byte[] generateAgentMessagePayloadBytes(AgentMessagePayload agentMessagePayload) {
@@ -162,9 +179,17 @@ public class PpaassMessageUtil {
             resultBuf.writeBoolean(true);
             resultBuf.writeBytes(this.generateNetAddressBytes(agentMessagePayload.getTargetAddress()));
         }
+        if (agentMessagePayload.getData() == null) {
+            resultBuf.writeLong(0);
+            byte[] result = new byte[resultBuf.readableBytes()];
+            resultBuf.readBytes(result);
+            return result;
+        }
         resultBuf.writeLong(agentMessagePayload.getData().length);
         resultBuf.writeBytes(agentMessagePayload.getData());
-        return resultBuf.array();
+        byte[] result = new byte[resultBuf.readableBytes()];
+        resultBuf.readBytes(result);
+        return result;
     }
 
     public byte[] generateMessageBytes(Message message) {
@@ -183,13 +208,42 @@ public class PpaassMessageUtil {
             resultBuf.writeInt(message.getConnectionId().length());
             resultBuf.writeBytes(message.getConnectionId().getBytes());
         }
-        resultBuf.writeInt(message.getUserToken().length());
+        resultBuf.writeLong(message.getUserToken().length());
         resultBuf.writeBytes(message.getUserToken().getBytes());
         resultBuf.writeByte(message.getPayloadEncryptionType().getValue());
-        resultBuf.writeInt(message.getPayloadEncryptionToken().length);
-        resultBuf.writeBytes(message.getPayloadEncryptionToken());
+        byte[] rsaEncryptedPayloadEncryptionToken =
+                CryptographyUtil.INSTANCE.rsaEncrypt(message.getPayloadEncryptionToken());
+        resultBuf.writeInt(rsaEncryptedPayloadEncryptionToken.length);
+        resultBuf.writeBytes(rsaEncryptedPayloadEncryptionToken);
+        if (message.getPayload() == null) {
+            resultBuf.writeLong(0);
+            byte[] result = new byte[resultBuf.readableBytes()];
+            resultBuf.readBytes(result);
+            return result;
+        }
+        if (PayloadEncryptionType.Blowfish == message.getPayloadEncryptionType()) {
+            byte[] encryptedPayload = CryptographyUtil.INSTANCE.blowfishEncrypt(message.getPayloadEncryptionToken(),
+                    message.getPayload());
+            resultBuf.writeLong(encryptedPayload.length);
+            resultBuf.writeBytes(encryptedPayload);
+            byte[] result = new byte[resultBuf.readableBytes()];
+            resultBuf.readBytes(result);
+            return result;
+        }
+        if (PayloadEncryptionType.Aes == message.getPayloadEncryptionType()) {
+            byte[] encryptedPayload = CryptographyUtil.INSTANCE.aesEncrypt(message.getPayloadEncryptionToken(),
+                    message.getPayload());
+            resultBuf.writeLong(encryptedPayload.length);
+            resultBuf.writeBytes(encryptedPayload);
+            byte[] result = new byte[resultBuf.readableBytes()];
+            resultBuf.readBytes(result);
+            return result;
+        }
+        //Plain
         resultBuf.writeLong(message.getPayload().length);
         resultBuf.writeBytes(message.getPayload());
-        return resultBuf.array();
+        byte[] result = new byte[resultBuf.readableBytes()];
+        resultBuf.readBytes(result);
+        return result;
     }
 }

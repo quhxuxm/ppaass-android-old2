@@ -1,8 +1,10 @@
 package com.ppaass.agent.cryptography;
 
 import android.util.Log;
+import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
+import org.apache.commons.codec.binary.Base64;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
@@ -21,7 +23,8 @@ public class CryptographyUtil {
     private static final String ALGORITHM_AES = "AES";
     private static final String ALGORITHM_BLOWFISH = "Blowfish";
     private static final String AES_CIPHER = "AES/ECB/PKCS5Padding";
-    private static final String BLOWFISH_CIPHER = "Blowfish/ECB/PKCS5Padding";
+        private static final String BLOWFISH_CIPHER = "Blowfish/ECB/PKCS5Padding";
+//    private static final String BLOWFISH_CIPHER = "Blowfish";
     public static final CryptographyUtil INSTANCE = new CryptographyUtil();
     private PublicKey publicKey;
     private PrivateKey privateKey;
@@ -30,11 +33,21 @@ public class CryptographyUtil {
     }
 
     public void init(byte[] rsaPublicKey, byte[] rsaPrivateKey) {
+        String rsaPublicKeyString = new String(rsaPublicKey);
+        rsaPublicKeyString = rsaPublicKeyString.replace("-----BEGIN PUBLIC KEY-----", "")
+                .replaceAll("\r\n", "")
+                .replace("-----END PUBLIC KEY-----", "");
+        byte[] rsaPublicKeyRawBytes = Base64.decodeBase64(rsaPublicKeyString);
+        String rsaPrivateKeyString = new String(rsaPrivateKey);
+        rsaPrivateKeyString = rsaPrivateKeyString.replace("-----BEGIN PRIVATE KEY-----", "")
+                .replaceAll("\r\n", "")
+                .replace("-----END PRIVATE KEY-----", "");
+        byte[] rsaPrivateKeyRawBytes = Base64.decodeBase64(rsaPrivateKeyString);
         try {
-            X509EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(rsaPublicKey);
+            X509EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(rsaPublicKeyRawBytes);
             KeyFactory rsaEncryptionCipherKeyFactory = KeyFactory.getInstance(ALGORITHM_RSA);
             this.publicKey = rsaEncryptionCipherKeyFactory.generatePublic(publicKeySpec);
-            PKCS8EncodedKeySpec privateKeySpec = new PKCS8EncodedKeySpec(rsaPrivateKey);
+            PKCS8EncodedKeySpec privateKeySpec = new PKCS8EncodedKeySpec(rsaPrivateKeyRawBytes);
             KeyFactory rsaDecryptionCipherKeyFactory = KeyFactory.getInstance(ALGORITHM_RSA);
             this.privateKey = rsaDecryptionCipherKeyFactory.generatePrivate(privateKeySpec);
         } catch (Exception e) {
@@ -128,7 +141,18 @@ public class CryptographyUtil {
             SecretKeySpec key = new SecretKeySpec(encryptionToken, ALGORITHM_BLOWFISH);
             Cipher cipher = Cipher.getInstance(BLOWFISH_CIPHER);
             cipher.init(Cipher.DECRYPT_MODE, key);
-            return cipher.doFinal(blowfishData);
+            ByteBuf blowfishDataBuf = Unpooled.wrappedBuffer(blowfishData);
+            ByteBuf resultBuf = Unpooled.buffer();
+            byte[] chunk = new byte[8];
+            while (blowfishDataBuf.isReadable()) {
+                int lengthToRead = Math.min(blowfishDataBuf.readableBytes(), chunk.length);
+                blowfishDataBuf.readBytes(chunk, 0, lengthToRead);
+                resultBuf.writeBytes(cipher.doFinal(chunk));
+                chunk = new byte[8];
+            }
+            byte[] result=new byte[resultBuf.readableBytes()];
+            resultBuf.readBytes(result);
+            return result;
         } catch (Exception e) {
             Log.e(CryptographyUtil.class.getName(),
                     "Fail to decrypt data with encryption token in Blowfish because of exception. Encryption token: \n" +

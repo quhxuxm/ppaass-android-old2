@@ -6,6 +6,9 @@ public class AgentMessagePayload {
     private NetAddress targetAddress;
     private byte[] data;
 
+    public AgentMessagePayload() {
+    }
+
     public AgentMessagePayloadType getPayloadType() {
         return payloadType;
     }
