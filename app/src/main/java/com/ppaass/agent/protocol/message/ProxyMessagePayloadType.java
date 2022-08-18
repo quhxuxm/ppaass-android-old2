@@ -1,25 +1,25 @@
 package com.ppaass.agent.protocol.message;
 
 public enum ProxyMessagePayloadType {
-    TcpConnectSuccess(210),
-    TcpConnectFail(211),
-    TcpData(212),
-    UdpAssociateSuccess(221),
-    UdpAssociateFail(222),
-    UdpData(224),
-    UdpDataRelayFail(223),
-    HeartbeatSuccess(230);
-    private final int value;
+    TcpConnectSuccess((byte)210),
+    TcpConnectFail((byte)211),
+    TcpData((byte)212),
+    UdpAssociateSuccess((byte)221),
+    UdpAssociateFail((byte)222),
+    UdpData((byte)224),
+    UdpDataRelayFail((byte)223),
+    HeartbeatSuccess((byte)230);
+    private final byte value;
 
-    ProxyMessagePayloadType(int value) {
+    ProxyMessagePayloadType(byte value) {
         this.value = value;
     }
 
-    public int getValue() {
+    public byte getValue() {
         return value;
     }
 
-    public static ProxyMessagePayloadType from(int value) {
+    public static ProxyMessagePayloadType from(byte value) {
         if (TcpConnectSuccess.getValue() == value) {
             return TcpConnectSuccess;
         }

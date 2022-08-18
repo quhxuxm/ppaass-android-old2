@@ -1,8 +1,10 @@
 package com.ppaass.agent.service.handler.tcp;
 
+import android.util.Log;
 import com.ppaass.agent.cryptography.CryptographyUtil;
 import com.ppaass.agent.protocol.message.*;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 
 public class PpaassMessageUtil {
@@ -38,23 +40,12 @@ public class PpaassMessageUtil {
         int payloadEncryptionTokenLength = messageBytes.readInt();
         byte[] payloadEncryptionToken = new byte[payloadEncryptionTokenLength];
         messageBytes.readBytes(payloadEncryptionToken);
+        long messagePayloadLength = messageBytes.readLong();
         switch (payloadEncryptionType) {
             case Plain: {
                 result.setPayloadEncryptionType(PayloadEncryptionType.Plain);
-                byte[] payloadBytes = new byte[messageBytes.readableBytes()];
+                byte[] payloadBytes = new byte[(int) messagePayloadLength];
                 messageBytes.readBytes(payloadBytes);
-                result.setPayload(payloadBytes);
-                return result;
-            }
-            case Blowfish: {
-                result.setPayloadEncryptionType(PayloadEncryptionType.Blowfish);
-                //TODO RSA decrypt encryption token
-                payloadEncryptionToken = CryptographyUtil.INSTANCE.rsaDecrypt(payloadEncryptionToken);
-                result.setPayloadEncryptionToken(payloadEncryptionToken);
-                //TODO Decrypt payload with Blowfish
-                byte[] payloadBytes = new byte[messageBytes.readableBytes()];
-                messageBytes.readBytes(payloadBytes);
-                payloadBytes = CryptographyUtil.INSTANCE.blowfishDecrypt(payloadEncryptionToken, payloadBytes);
                 result.setPayload(payloadBytes);
                 return result;
             }
@@ -64,9 +55,12 @@ public class PpaassMessageUtil {
                 payloadEncryptionToken = CryptographyUtil.INSTANCE.rsaDecrypt(payloadEncryptionToken);
                 result.setPayloadEncryptionToken(payloadEncryptionToken);
                 //TODO Decrypt payload with Aes
-                byte[] payloadBytes = new byte[messageBytes.readableBytes()];
+                byte[] payloadBytes = new byte[(int) messagePayloadLength];
                 messageBytes.readBytes(payloadBytes);
                 payloadBytes = CryptographyUtil.INSTANCE.aesDecrypt(payloadEncryptionToken, payloadBytes);
+                Log.d(PpaassMessageUtil.class.getName(),
+                        "Message payload bytes:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(payloadBytes)) +
+                                "\n");
                 result.setPayload(payloadBytes);
                 return result;
             }
@@ -78,7 +72,7 @@ public class PpaassMessageUtil {
         ProxyMessagePayload result = new ProxyMessagePayload();
         ByteBuf payloadByteBuf = Unpooled.wrappedBuffer(payloadBytes);
         int payloadType = payloadByteBuf.readByte();
-        result.setPayloadType(ProxyMessagePayloadType.from(payloadType));
+        result.setPayloadType(ProxyMessagePayloadType.from((byte)payloadType));
         boolean sourceAddressExist = payloadByteBuf.readBoolean();
         if (sourceAddressExist) {
             NetAddress sourceAddress = readNetAddress(payloadByteBuf);
@@ -217,15 +211,6 @@ public class PpaassMessageUtil {
         resultBuf.writeBytes(rsaEncryptedPayloadEncryptionToken);
         if (message.getPayload() == null) {
             resultBuf.writeLong(0);
-            byte[] result = new byte[resultBuf.readableBytes()];
-            resultBuf.readBytes(result);
-            return result;
-        }
-        if (PayloadEncryptionType.Blowfish == message.getPayloadEncryptionType()) {
-            byte[] encryptedPayload = CryptographyUtil.INSTANCE.blowfishEncrypt(message.getPayloadEncryptionToken(),
-                    message.getPayload());
-            resultBuf.writeLong(encryptedPayload.length);
-            resultBuf.writeBytes(encryptedPayload);
             byte[] result = new byte[resultBuf.readableBytes()];
             resultBuf.readBytes(result);
             return result;

@@ -28,7 +28,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
-        Log.d(TcpConnection.class.getName(),
+        Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                 "<<<<---- Tcp connection connected, begin to relay remote data to device, current connection:  " +
                         tcpConnection);
     }
@@ -85,15 +85,15 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
                 // Data should write to device first then increase the sequence number
                 if (!tcpConnection.compareAndSetCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber(),
                         tcpConnection.getCurrentSequenceNumber() + mssData.length)) {
-                    Log.e(TcpConnection.class.getName(),
+                    Log.e(TcpConnectionProxyMessageHandler.class.getName(),
                             "<<<<---- Fail to receive remote data write ack to device because of concurrent set on connection sequence, current connection: " +
                                     tcpConnection + ", remote data size: " + mssData.length);
                     return;
                 }
-                Log.d(TcpConnection.class.getName(),
+                Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                         "<<<<---- Receive remote data write ack to device, current connection: " +
                                 tcpConnection + ", remote data size: " + mssData.length);
-                Log.v(TcpConnection.class.getName(),
+                Log.v(TcpConnectionProxyMessageHandler.class.getName(),
                         "<<<<---- Remote data:\n\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(mssData)) +
                                 "\n\n");
             }
@@ -110,13 +110,14 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                 "<<<<---- Tcp connection remote channel closed, current connection: " + tcpConnection);
+        tcpConnection.finallyCloseTcpConnection();
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
-        Log.e(TcpConnection.class.getName(),
+        Log.e(TcpConnectionProxyMessageHandler.class.getName(),
                 "<<<<---- Tcp connection exception happen on remote channel, current connection: " +
                         tcpConnection, cause);
         ctx.close();

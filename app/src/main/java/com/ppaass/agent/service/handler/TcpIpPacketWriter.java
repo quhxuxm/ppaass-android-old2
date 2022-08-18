@@ -8,6 +8,9 @@ public interface TcpIpPacketWriter {
     void writeAckToDevice(byte[] ackData, TcpConnection connection, long sequenceNumber,
                           long acknowledgementNumber);
 
+    void writeRstAckToDevice(TcpConnection connection, long sequenceNumber,
+                             long acknowledgementNumber);
+
     void writeRstToDevice(TcpConnection connection, long sequenceNumber,
                           long acknowledgementNumber);
 
