@@ -24,7 +24,6 @@ import io.netty.util.concurrent.Promise;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Comparator;
-import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -45,13 +44,12 @@ public class TcpConnection implements Runnable {
     }
 
     private final String id;
-    private final long createTime;
+    private final AtomicLong latestActiveTime;
     private final TcpConnectionRepositoryKey repositoryKey;
     private Channel proxyChannel;
     private final TcpIpPacketWriter tcpIpPacketWriter;
     private final BlockingQueue<TcpPacket> deviceInboundQueue;
-    private final Map<TcpConnectionRepositoryKey, TcpConnection> establishedConnectionRepository;
-    private final Map<TcpConnectionRepositoryKey, TcpConnection> preparingConnectionRepository;
+    private final ITcpConnectionManager connectionManager;
     private final AtomicReference<TcpConnectionStatus> status;
     private final AtomicLong currentSequenceNumber;
     private final AtomicLong currentAcknowledgementNumber;
@@ -62,11 +60,10 @@ public class TcpConnection implements Runnable {
     private final Promise<Boolean> remoteConnectStatusPromise;
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpIpPacketWriter tcpIpPacketWriter,
-                         Map<TcpConnectionRepositoryKey, TcpConnection> preparingConnectionRepository,
-                         Map<TcpConnectionRepositoryKey, TcpConnection> establishedConnectionRepository,
+                         ITcpConnectionManager connectionManager,
                          VpnService vpnService) {
-        this.createTime = System.currentTimeMillis();
         this.id = UUID.randomUUID().toString().replace("-", "");
+        this.latestActiveTime = new AtomicLong(System.currentTimeMillis());
         this.repositoryKey = repositoryKey;
         this.status = new AtomicReference<>(TcpConnectionStatus.LISTEN);
         this.currentAcknowledgementNumber = new AtomicLong(0);
@@ -76,8 +73,7 @@ public class TcpConnection implements Runnable {
         this.deviceInboundQueue =
                 new PriorityBlockingQueue<>(1024, Comparator.comparingLong(p -> p.getHeader().getSequenceNumber()));
         this.tcpIpPacketWriter = tcpIpPacketWriter;
-        this.establishedConnectionRepository = establishedConnectionRepository;
-        this.preparingConnectionRepository = preparingConnectionRepository;
+        this.connectionManager = connectionManager;
         this.vpnService = vpnService;
         this.remoteBootstrap = this.createBootstrap();
         this.remoteConnectStatusPromise = new DefaultPromise<>(this.remoteBootstrap.config().group().next());
@@ -87,6 +83,7 @@ public class TcpConnection implements Runnable {
         while (this.status.get() != TcpConnectionStatus.CLOSED) {
             try {
                 TcpPacket deviceInboundTcpPacket = this.deviceInboundQueue.take();
+                this.setLatestActiveTime();
                 Log.d(TcpConnection.class.getName(),
                         ">>>>>>>> Success take tcp packet from device inbound, current connection: " + this +
                                 "; device inbound tcp packet: " + deviceInboundTcpPacket +
@@ -128,8 +125,6 @@ public class TcpConnection implements Runnable {
                     this.currentSequenceNumber.set(vpnIsn);
                     this.vpnInitialSequenceNumber.set(vpnIsn);
                     this.status.set(TcpConnectionStatus.SYNC_RCVD);
-                    this.preparingConnectionRepository.remove(this.repositoryKey);
-                    this.establishedConnectionRepository.put(this.repositoryKey, this);
                     this.tcpIpPacketWriter.writeSyncAckToDevice(this, this.currentSequenceNumber.get(),
                             this.currentAcknowledgementNumber.get() + 1);
                     Log.d(TcpConnection.class.getName(),
@@ -373,15 +368,22 @@ public class TcpConnection implements Runnable {
                 return;
             } finally {
                 Log.d(TcpConnection.class.getName(),
-                        "######## Current connection: " + this + "; connection repository size: " +
-                                this.establishedConnectionRepository.size() + "; device inbound queue size: " +
+                        "######## Current connection: " + this + "; device inbound queue size: " +
                                 this.deviceInboundQueue.size());
             }
         }
     }
 
-    public long getCreateTime() {
-        return createTime;
+    public long getLatestActiveTime() {
+        return latestActiveTime.get();
+    }
+
+    public void setLatestActiveTime() {
+        this.latestActiveTime.set(System.currentTimeMillis());
+    }
+
+    public TcpConnectionStatus getStatus() {
+        return status.get();
     }
 
     private Bootstrap createBootstrap() {
@@ -424,12 +426,9 @@ public class TcpConnection implements Runnable {
                             deviceInboundQueue.size(), e);
         }
         this.remoteBootstrap.config().group().shutdownGracefully();
-        this.establishedConnectionRepository.remove(this.repositoryKey);
+        this.connectionManager.closeConnection(this.repositoryKey);
         Log.d(TcpConnection.class.getName(),
-                ">>>>>>>> Tcp connection closed, current tcp connection: " + this +
-                        ", established connection repository size: " +
-                        this.establishedConnectionRepository.size() + ", preparing connection repository size: " +
-                        this.preparingConnectionRepository.size());
+                ">>>>>>>> Tcp connection closed, current tcp connection: " + this);
     }
 
     private Channel connectProxy() throws Exception {
@@ -457,9 +456,6 @@ public class TcpConnection implements Runnable {
      */
     public void onDeviceInbound(TcpPacket tcpPacket) throws Exception {
         this.deviceInboundQueue.put(tcpPacket);
-        synchronized (this.deviceInboundQueue) {
-            this.deviceInboundQueue.notifyAll();
-        }
     }
 
     public TcpConnectionRepositoryKey getRepositoryKey() {

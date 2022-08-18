@@ -9,9 +9,9 @@ public interface IVpnConst {
     int TCP_MSS = MTU - 40;
     int TCP_WINDOW = 65535;
     int UDP_HEADER_LENGTH = 8;
-//    String PPAASS_PROXY_IP="192.168.31.200";
+    String PPAASS_PROXY_IP="192.168.31.200";
 //    String PPAASS_PROXY_IP="149.28.219.182";
-    String PPAASS_PROXY_IP="10.175.4.220";
+//    String PPAASS_PROXY_IP="10.175.4.220";
     short PPAASS_PROXY_PORT=9097;
     String PPAASS_USER_TOKEN="user1";
 

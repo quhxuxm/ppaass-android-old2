@@ -62,6 +62,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
     protected void channelRead0(ChannelHandlerContext ctx, Message proxyMessage) {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
+        tcpConnection.setLatestActiveTime();
         //Relay remote data to device and use mss as the transfer unit
         byte[] proxyMessagePayloadBytes = proxyMessage.getPayload();
         ProxyMessagePayload proxyMessagePayload =

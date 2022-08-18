@@ -11,52 +11,62 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Random;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class IpV4TcpConnectionHandler implements TcpIpPacketWriter {
+public class IpV4TcpConnectionHandler implements TcpIpPacketWriter, ITcpConnectionManager {
     private static final Random RANDOM = new Random();
     private static final AtomicInteger TIMESTAMP = new AtomicInteger();
     private final FileOutputStream rawDeviceOutputStream;
-    private final Map<TcpConnectionRepositoryKey, TcpConnection> establishedConnectionRepository;
-    private final Map<TcpConnectionRepositoryKey, TcpConnection> preparingConnectionRepository;
+    private final Map<TcpConnectionRepositoryKey, TcpConnectionWrapper> connectionRepository;
     private final VpnService vpnService;
     private final ExecutorService connectionThreadPool;
     private final AtomicInteger ipIdentifier;
 
+    private static class TcpConnectionWrapper {
+        TcpConnection connection;
+        Future<?> connectionTask;
+    }
+
     public IpV4TcpConnectionHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService) {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
-        this.establishedConnectionRepository = new ConcurrentHashMap<>();
-        this.preparingConnectionRepository = new ConcurrentHashMap<>();
+        this.connectionRepository = new ConcurrentHashMap<>();
         this.connectionThreadPool = Executors.newWorkStealingPool(256);
         this.ipIdentifier = new AtomicInteger(RANDOM.nextInt(Short.MAX_VALUE * 2 + 2));
         Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
-            this.preparingConnectionRepository.forEach((tcpConnectionRepositoryKey, tcpConnection) -> {
-                if (tcpConnection.getCreateTime() - System.currentTimeMillis() > 1000 * 120) {
-                    this.preparingConnectionRepository.remove(tcpConnectionRepositoryKey);
+            this.connectionRepository.forEach((tcpConnectionRepositoryKey, tcpConnectionWrapper) -> {
+                TcpConnection tcpConnection = tcpConnectionWrapper.connection;
+                Future<?> tcpConnectionTask = tcpConnectionWrapper.connectionTask;
+                long connectionIdleTime = tcpConnection.getLatestActiveTime() - System.currentTimeMillis();
+                if (connectionIdleTime > 1000 * 120 && (tcpConnection.getStatus() == TcpConnectionStatus.LISTEN ||
+                        tcpConnection.getStatus() == TcpConnectionStatus.CLOSED)) {
+                    tcpConnectionTask.cancel(true);
+                    this.connectionRepository.remove(tcpConnectionRepositoryKey);
                 }
             });
         }, 0, 60, TimeUnit.SECONDS);
     }
 
-    private TcpConnection prepareTcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket) {
-        TcpConnection establishedConnection = this.establishedConnectionRepository.get(repositoryKey);
-        return Objects.requireNonNullElseGet(establishedConnection,
-                () -> this.preparingConnectionRepository.computeIfAbsent(repositoryKey, key -> {
-                    TcpConnection result = new TcpConnection(repositoryKey, this, this.preparingConnectionRepository,
-                            this.establishedConnectionRepository,
-                            this.vpnService);
-                    this.connectionThreadPool.execute(result);
-                    Log.d(IpV4TcpConnectionHandler.class.getName(),
-                            ">>>>>>>> Create tcp connection: " + result + ", tcp packet: " + tcpPacket);
-                    return result;
-                }));
+    private TcpConnectionWrapper prepareTcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket) {
+        synchronized (this.connectionRepository) {
+            TcpConnectionWrapper result = this.connectionRepository.get(repositoryKey);
+            if (result != null) {
+                return result;
+            }
+            result = new TcpConnectionWrapper();
+            result.connection = new TcpConnection(repositoryKey, this,
+                    this,
+                    this.vpnService);
+            this.connectionRepository.put(repositoryKey, result);
+            result.connectionTask = this.connectionThreadPool.submit(result.connection);
+            Log.d(IpV4TcpConnectionHandler.class.getName(),
+                    ">>>>>>>> Create tcp connection: " + result + ", tcp packet: " + tcpPacket +
+                            ", connection repository size: " + this.connectionRepository.size() +
+                            ", connection thread pool: " + this.connectionThreadPool);
+            return result;
+        }
     }
 
     private int generateChecksumToVerify(TcpPacket tcpPacket, IpV4Header ipV4Header) {
@@ -84,13 +94,25 @@ public class IpV4TcpConnectionHandler implements TcpIpPacketWriter {
         byte[] destinationAddress = ipV4Header.getDestinationAddress();
         TcpConnectionRepositoryKey tcpConnectionRepositoryKey =
                 new TcpConnectionRepositoryKey(sourcePort, destinationPort, sourceAddress, destinationAddress);
-        TcpConnection tcpConnection = this.prepareTcpConnection(tcpConnectionRepositoryKey, tcpPacket);
+        TcpConnectionWrapper tcpConnectionWrapper = this.prepareTcpConnection(tcpConnectionRepositoryKey, tcpPacket);
+        TcpConnection tcpConnection = tcpConnectionWrapper.connection;
         tcpConnection.onDeviceInbound(tcpPacket);
         Log.v(IpV4TcpConnectionHandler.class.getName(),
                 ">>>>>>>> Do inbound for tcp connection: " + tcpConnection + ", incoming tcp packet: " + tcpPacket +
                         ", ip header: " +
                         ipV4Header + ", tcp connection repository size: " +
-                        this.establishedConnectionRepository.size());
+                        this.connectionRepository.size());
+    }
+
+    @Override
+    public void closeConnection(TcpConnectionRepositoryKey key) {
+        synchronized (this) {
+            TcpConnectionWrapper tcpConnectionWrapper = this.connectionRepository.remove(key);
+            if (tcpConnectionWrapper == null) {
+                return;
+            }
+            tcpConnectionWrapper.connectionTask.cancel(true);
+        }
     }
 
     public void writeSyncAckToDevice(TcpConnection connection, long sequenceNumber, long acknowledgementNumber) {
