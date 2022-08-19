@@ -15,29 +15,29 @@ public class PpaassMessageUtil {
 
     public Message parseMessageBytes(ByteBuf messageBytes) {
         Message result = new Message();
-        int idLength = messageBytes.readInt();
+        int idLength = messageBytes.readShort() & 0xFFFF;
         byte[] idBytes = new byte[idLength];
         messageBytes.readBytes(idBytes);
         String id = new String(idBytes);
         result.setId(id);
-        int refIdLength = messageBytes.readInt();
+        int refIdLength = messageBytes.readShort() & 0xFFFF;
         byte[] refIdBytes = new byte[refIdLength];
         messageBytes.readBytes(refIdBytes);
         String refId = new String(refIdBytes);
         result.setRefId(refId);
-        int connectionIdLength = messageBytes.readInt();
+        int connectionIdLength = messageBytes.readShort() & 0xFFFF;
         byte[] connectionIdBytes = new byte[connectionIdLength];
         messageBytes.readBytes(connectionIdBytes);
         String connectionId = new String(connectionIdBytes);
         result.setConnectionId(connectionId);
-        long userTokenLength = messageBytes.readLong();
-        byte[] userTokenBytes = new byte[(int) userTokenLength];
+        int userTokenLength = messageBytes.readShort() & 0xFFFF;
+        byte[] userTokenBytes = new byte[userTokenLength];
         messageBytes.readBytes(userTokenBytes);
         String userToken = new String(userTokenBytes);
         result.setUserToken(userToken);
         byte payloadEncryptionTypeValue = messageBytes.readByte();
         PayloadEncryptionType payloadEncryptionType = PayloadEncryptionType.from(payloadEncryptionTypeValue);
-        int payloadEncryptionTokenLength = messageBytes.readInt();
+        int payloadEncryptionTokenLength = messageBytes.readShort() & 0xFFFF;
         byte[] payloadEncryptionToken = new byte[payloadEncryptionTokenLength];
         messageBytes.readBytes(payloadEncryptionToken);
         long messagePayloadLength = messageBytes.readLong();
@@ -188,26 +188,26 @@ public class PpaassMessageUtil {
 
     public byte[] generateMessageBytes(Message message) {
         ByteBuf resultBuf = Unpooled.buffer();
-        resultBuf.writeInt(message.getId().length());
+        resultBuf.writeShort(message.getId().length());
         resultBuf.writeBytes(message.getId().getBytes());
         if (message.getRefId() == null) {
-            resultBuf.writeInt(0);
+            resultBuf.writeShort(0);
         } else {
-            resultBuf.writeInt(message.getRefId().length());
+            resultBuf.writeShort(message.getRefId().length());
             resultBuf.writeBytes(message.getRefId().getBytes());
         }
         if (message.getConnectionId() == null) {
-            resultBuf.writeInt(0);
+            resultBuf.writeShort(0);
         } else {
-            resultBuf.writeInt(message.getConnectionId().length());
+            resultBuf.writeShort(message.getConnectionId().length());
             resultBuf.writeBytes(message.getConnectionId().getBytes());
         }
-        resultBuf.writeLong(message.getUserToken().length());
+        resultBuf.writeShort(message.getUserToken().length());
         resultBuf.writeBytes(message.getUserToken().getBytes());
         resultBuf.writeByte(message.getPayloadEncryptionType().getValue());
         byte[] rsaEncryptedPayloadEncryptionToken =
                 CryptographyUtil.INSTANCE.rsaEncrypt(message.getPayloadEncryptionToken());
-        resultBuf.writeInt(rsaEncryptedPayloadEncryptionToken.length);
+        resultBuf.writeShort(rsaEncryptedPayloadEncryptionToken.length);
         resultBuf.writeBytes(rsaEncryptedPayloadEncryptionToken);
         if (message.getPayload() == null) {
             resultBuf.writeLong(0);

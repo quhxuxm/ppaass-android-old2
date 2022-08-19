@@ -19,4 +19,5 @@ public interface IVpnConst {
     String TCP_CONNECTION = "TCP_CONNECTION";
     String UDP_SOURCE_ADDR = "UDP_SOURCE_ADDR";
     String UDP_SOURCE_PORT = "UDP_SOURCE_PORT";
+    String PPAASS_PROXY_USER_TOKEN="user1";
 }

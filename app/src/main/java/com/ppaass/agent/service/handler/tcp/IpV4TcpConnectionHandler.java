@@ -27,6 +27,14 @@ public class IpV4TcpConnectionHandler implements TcpIpPacketWriter, ITcpConnecti
     private static class TcpConnectionWrapper {
         TcpConnection connection;
         Future<?> connectionTask;
+
+        @Override
+        public String toString() {
+            return "TcpConnectionWrapper{" +
+                    "connection=" + connection +
+                    ", connectionTask=" + connectionTask +
+                    '}';
+        }
     }
 
     public IpV4TcpConnectionHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService) {
