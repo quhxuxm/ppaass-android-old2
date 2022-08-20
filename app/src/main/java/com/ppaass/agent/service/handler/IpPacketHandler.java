@@ -105,7 +105,7 @@ public class IpPacketHandler {
                 return null;
             }
             deviceInputBuffer.flip();
-            byte[] buffer = new byte[deviceInputBuffer.remaining()];
+            byte[] buffer = new byte[size];
             deviceInputBuffer.get(buffer);
             return IpPacketReader.INSTANCE.parse(buffer);
         } catch (Exception e) {

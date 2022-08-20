@@ -11,7 +11,7 @@ import com.ppaass.agent.service.PpaassVpnTcpChannelFactory;
 import com.ppaass.agent.service.handler.PpaassMessageDecoder;
 import com.ppaass.agent.service.handler.PpaassMessageEncoder;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
-import com.ppaass.agent.service.handler.TcpIpPacketWriter;
+import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
 import com.ppaass.agent.util.UUIDUtil;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
@@ -50,7 +50,7 @@ public class TcpConnection implements Runnable {
     private final AtomicLong latestActiveTime;
     private final TcpConnectionRepositoryKey repositoryKey;
     private Channel proxyChannel;
-    private final TcpIpPacketWriter tcpIpPacketWriter;
+    private final ITcpIpPacketWriter tcpIpPacketWriter;
     private final BlockingQueue<TcpPacket> deviceInboundQueue;
     private final ITcpConnectionManager connectionManager;
     private final AtomicReference<TcpConnectionStatus> status;
@@ -62,7 +62,7 @@ public class TcpConnection implements Runnable {
     private final Bootstrap remoteBootstrap;
     private final Promise<Boolean> remoteConnectStatusPromise;
 
-    public TcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpIpPacketWriter tcpIpPacketWriter,
+    public TcpConnection(TcpConnectionRepositoryKey repositoryKey, ITcpIpPacketWriter tcpIpPacketWriter,
                          ITcpConnectionManager connectionManager,
                          VpnService vpnService) {
         this.id = UUID.randomUUID().toString().replace("-", "");

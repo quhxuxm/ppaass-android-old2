@@ -72,7 +72,7 @@ public class PpaassMessageUtil {
         ProxyMessagePayload result = new ProxyMessagePayload();
         ByteBuf payloadByteBuf = Unpooled.wrappedBuffer(payloadBytes);
         int payloadType = payloadByteBuf.readByte();
-        result.setPayloadType(ProxyMessagePayloadType.from((byte)payloadType));
+        result.setPayloadType(ProxyMessagePayloadType.from((byte) payloadType));
         boolean sourceAddressExist = payloadByteBuf.readBoolean();
         if (sourceAddressExist) {
             NetAddress sourceAddress = readNetAddress(payloadByteBuf);
@@ -99,7 +99,7 @@ public class PpaassMessageUtil {
                 for (int i = 0; i < ipV4Address.length; i++) {
                     ipV4Address[i] = payloadByteBuf.readByte();
                 }
-                short port = payloadByteBuf.readShort();
+                int port = payloadByteBuf.readShort() & 0xFFFF;
                 NetAddress result = new NetAddress();
                 result.setType(NetAddressType.IpV4);
                 result.setHost(ipV4Address);
@@ -111,7 +111,7 @@ public class PpaassMessageUtil {
                 for (int i = 0; i < ipV6Address.length; i++) {
                     ipV6Address[i] = payloadByteBuf.readByte();
                 }
-                short port = payloadByteBuf.readShort();
+                int port = payloadByteBuf.readShort() & 0xFFFF;
                 NetAddress result = new NetAddress();
                 result.setType(NetAddressType.IpV6);
                 result.setHost(ipV6Address);
@@ -122,7 +122,7 @@ public class PpaassMessageUtil {
                 int domainLength = payloadByteBuf.readInt();
                 byte[] hostNameBytes = new byte[domainLength];
                 payloadByteBuf.readBytes(hostNameBytes);
-                short port = payloadByteBuf.readShort();
+                int port = payloadByteBuf.readShort() & 0xFFFF;
                 NetAddress result = new NetAddress();
                 result.setType(NetAddressType.Domain);
                 result.setHost(hostNameBytes);

@@ -5,7 +5,7 @@ import android.util.Log;
 import com.ppaass.agent.protocol.general.ip.*;
 import com.ppaass.agent.protocol.general.tcp.*;
 import com.ppaass.agent.service.IVpnConst;
-import com.ppaass.agent.service.handler.TcpIpPacketWriter;
+import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -15,7 +15,7 @@ import java.util.Random;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class IpV4TcpConnectionHandler implements TcpIpPacketWriter, ITcpConnectionManager {
+public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnectionManager {
     private static final Random RANDOM = new Random();
     private static final AtomicInteger TIMESTAMP = new AtomicInteger();
     private final FileOutputStream rawDeviceOutputStream;

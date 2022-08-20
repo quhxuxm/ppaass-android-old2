@@ -1,15 +1,17 @@
 package com.ppaass.agent.protocol.message;
 
+import java.util.Arrays;
+
 public class NetAddress {
-    private short port;
+    private int port;
     private byte[] host;
     private NetAddressType type;
 
-    public short getPort() {
+    public int getPort() {
         return port;
     }
 
-    public void setPort(short port) {
+    public void setPort(int port) {
         this.port = port;
     }
 
@@ -27,5 +29,14 @@ public class NetAddress {
 
     public void setType(NetAddressType type) {
         this.type = type;
+    }
+
+    @Override
+    public String toString() {
+        return "NetAddress{" +
+                "type=" + type +
+                ", host=" + Arrays.toString(host) +
+                ", port=" + port +
+                '}';
     }
 }

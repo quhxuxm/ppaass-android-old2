@@ -4,7 +4,7 @@ import android.util.Log;
 import com.ppaass.agent.protocol.message.*;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
-import com.ppaass.agent.service.handler.TcpIpPacketWriter;
+import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
 import com.ppaass.agent.util.UUIDUtil;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
@@ -15,10 +15,10 @@ import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.Promise;
 
 public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
-    private final TcpIpPacketWriter tcpIpPacketWriter;
+    private final ITcpIpPacketWriter tcpIpPacketWriter;
     private final Promise<Boolean> remoteConnectStatusPromise;
 
-    public TcpConnectionProxyMessageHandler(TcpIpPacketWriter tcpIpPacketWriter,
+    public TcpConnectionProxyMessageHandler(ITcpIpPacketWriter tcpIpPacketWriter,
                                             Promise<Boolean> remoteConnectStatusPromise) {
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.remoteConnectStatusPromise = remoteConnectStatusPromise;

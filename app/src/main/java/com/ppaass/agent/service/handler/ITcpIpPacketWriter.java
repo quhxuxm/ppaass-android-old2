@@ -2,7 +2,7 @@ package com.ppaass.agent.service.handler;
 
 import com.ppaass.agent.service.handler.tcp.TcpConnection;
 
-public interface TcpIpPacketWriter {
+public interface ITcpIpPacketWriter {
     void writeSyncAckToDevice(TcpConnection connection, long sequenceNumber, long acknowledgementNumber);
 
     void writeAckToDevice(byte[] ackData, TcpConnection connection, long sequenceNumber,

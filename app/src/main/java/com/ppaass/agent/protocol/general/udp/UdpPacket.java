@@ -2,8 +2,6 @@ package com.ppaass.agent.protocol.general.udp;
 
 import com.ppaass.agent.protocol.general.ip.IIpData;
 
-import java.util.Arrays;
-
 public class UdpPacket implements IIpData {
     private final UdpHeader header;
     private final byte[] data;
@@ -29,7 +27,7 @@ public class UdpPacket implements IIpData {
     public String toString() {
         return "UdpPacket{" +
                 "header=" + header +
-                ", data=" + Arrays.toString(data) +
+                ", data size=" + data.length +
                 '}';
     }
 }
