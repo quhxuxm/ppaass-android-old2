@@ -59,14 +59,14 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
         if (ProxyMessagePayloadType.UdpAssociateSuccess == proxyMessagePayload.getPayloadType()) {
             this.udpAssociateChannelPromise.setSuccess(ctx.channel());
             Log.d(UdpProxyMessageHandler.class.getName(),
-                    "<<<<---- Udp associate success");
+                    "<<<<---- Udp associate success, proxy message: " + proxyMessage);
             return;
         }
         if (ProxyMessagePayloadType.UdpAssociateFail == proxyMessagePayload.getPayloadType()) {
             this.udpAssociateChannelPromise.setFailure(
                     new IllegalStateException("Proxy udp associate fail"));
             Log.e(UdpProxyMessageHandler.class.getName(),
-                    "<<<<---- Udp associate fail, source address");
+                    "<<<<---- Udp associate fail, proxy message: " + proxyMessage);
             return;
         }
         if (ProxyMessagePayloadType.UdpData == proxyMessagePayload.getPayloadType()) {

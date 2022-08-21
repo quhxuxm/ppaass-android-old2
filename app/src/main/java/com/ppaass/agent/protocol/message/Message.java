@@ -64,4 +64,17 @@ public class Message {
     public void setPayload(byte[] payload) {
         this.payload = payload;
     }
+
+    @Override
+    public String toString() {
+        return "Message{" +
+                "id='" + id + '\'' +
+                ", refId='" + refId + '\'' +
+                ", connectionId='" + connectionId + '\'' +
+                ", userToken='" + userToken + '\'' +
+                ", payloadEncryptionType=" + payloadEncryptionType +
+                ", payloadEncryptionToken size=" + payloadEncryptionToken.length +
+                ", payload data size=" + payload.length +
+                '}';
+    }
 }

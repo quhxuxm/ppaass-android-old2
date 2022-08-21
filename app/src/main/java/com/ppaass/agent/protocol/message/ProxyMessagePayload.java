@@ -37,4 +37,14 @@ public class ProxyMessagePayload {
     public void setData(byte[] data) {
         this.data = data;
     }
+
+    @Override
+    public String toString() {
+        return "ProxyMessagePayload{" +
+                "payloadType=" + payloadType +
+                ", sourceAddress=" + sourceAddress +
+                ", targetAddress=" + targetAddress +
+                ", data size=" + data.length +
+                '}';
+    }
 }
