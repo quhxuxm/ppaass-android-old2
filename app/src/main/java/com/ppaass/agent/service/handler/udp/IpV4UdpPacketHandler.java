@@ -14,14 +14,16 @@ import com.ppaass.agent.service.handler.PpaassMessageEncoder;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
 import com.ppaass.agent.util.UUIDUtil;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
+import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.dns.DatagramDnsQueryDecoder;
+import io.netty.handler.codec.dns.DnsQuery;
 import io.netty.util.concurrent.DefaultPromise;
 import io.netty.util.concurrent.Promise;
 
@@ -29,48 +31,69 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.TimeUnit;
 
 public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     private final FileOutputStream rawDeviceOutputStream;
     private final VpnService vpnService;
-    private final Channel proxyChannel;
+    private Channel proxyChannel;
 
     public IpV4UdpPacketHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService)
             throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
-        NioEventLoopGroup udpNioEventLoopGroup = new NioEventLoopGroup(8);
-        Promise<Channel> udpAssociatePromise = new DefaultPromise<>(udpNioEventLoopGroup.next());
-        Bootstrap udpBootstrap = this.createBootstrap(udpNioEventLoopGroup, udpAssociatePromise);
-        InetSocketAddress proxyAddress =
-                new InetSocketAddress(InetAddress.getByName(IVpnConst.PPAASS_PROXY_IP), IVpnConst.PPAASS_PROXY_PORT);
-        udpBootstrap.connect(proxyAddress);
-        this.proxyChannel = udpAssociatePromise.get();
+        this.proxyChannel = this.prepareUdpChannel().get(120 * 1000, TimeUnit.MILLISECONDS);
     }
 
-    private Bootstrap createBootstrap(NioEventLoopGroup udpNioEventLoopGroup,
-                                      Promise<Channel> udpAssociateChannelPromise) {
-        Bootstrap result = new Bootstrap();
-        result.group(udpNioEventLoopGroup);
-        result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
-        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
-        result.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
-        result.option(ChannelOption.SO_KEEPALIVE, false);
-        result.option(ChannelOption.AUTO_READ, true);
-        result.option(ChannelOption.AUTO_CLOSE, true);
-        result.option(ChannelOption.TCP_NODELAY, true);
-        result.option(ChannelOption.SO_REUSEADDR, true);
-        result.handler(new ChannelInitializer<NioSocketChannel>() {
+    private Promise<Channel> prepareUdpChannel() throws UnknownHostException, InterruptedException {
+        InetSocketAddress proxyAddress =
+                new InetSocketAddress(InetAddress.getByName(IVpnConst.PPAASS_PROXY_IP), IVpnConst.PPAASS_PROXY_PORT);
+        NioEventLoopGroup udpNioEventLoopGroup = new NioEventLoopGroup(4);
+        Promise<Channel> udpAssociatePromise = new DefaultPromise<>(udpNioEventLoopGroup.next());
+        Bootstrap udpBootstrap = new Bootstrap();
+        udpBootstrap.group(udpNioEventLoopGroup);
+        udpBootstrap.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
+        udpBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
+        udpBootstrap.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
+        udpBootstrap.option(ChannelOption.SO_KEEPALIVE, true);
+        udpBootstrap.option(ChannelOption.AUTO_READ, true);
+        udpBootstrap.option(ChannelOption.AUTO_CLOSE, false);
+        udpBootstrap.option(ChannelOption.TCP_NODELAY, true);
+        udpBootstrap.option(ChannelOption.SO_REUSEADDR, true);
+        udpBootstrap.option(ChannelOption.TCP_FASTOPEN, Integer.MAX_VALUE);
+        udpBootstrap.handler(new ChannelInitializer<NioSocketChannel>() {
             @Override
             protected void initChannel(@NonNull NioSocketChannel ch) {
                 ch.pipeline().addLast(new PpaassMessageDecoder());
                 ch.pipeline()
-                        .addLast(new UdpProxyMessageHandler(IpV4UdpPacketHandler.this, udpAssociateChannelPromise));
+                        .addLast(new UdpProxyMessageHandler(IpV4UdpPacketHandler.this, udpAssociatePromise));
                 ch.pipeline().addLast(new PpaassMessageEncoder(false));
             }
         });
-        return result;
+        udpBootstrap.connect(proxyAddress).sync();
+        return udpAssociatePromise;
+    }
+
+    private void logDnsQuestion(UdpPacket udpPacket, IpV4Header ipHeader) {
+        try {
+            InetSocketAddress udpDestAddress =
+                    new InetSocketAddress(InetAddress.getByAddress(ipHeader.getDestinationAddress()),
+                            udpPacket.getHeader().getDestinationPort());
+            InetSocketAddress udpSourceAddress =
+                    new InetSocketAddress(InetAddress.getByAddress(ipHeader.getSourceAddress()),
+                            udpPacket.getHeader().getSourcePort());
+            DatagramPacket dnsPacket =
+                    new DatagramPacket(Unpooled.wrappedBuffer(udpPacket.getData()), udpDestAddress, udpSourceAddress);
+            EmbeddedChannel logChannel = new EmbeddedChannel();
+            logChannel.pipeline().addLast(new DatagramDnsQueryDecoder());
+            logChannel.writeInbound(dnsPacket);
+            DnsQuery dnsQuery = logChannel.readInbound();
+            Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query: " + dnsQuery);
+        } catch (Exception e) {
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when logging DNS Query.", e);
+        }
     }
 
     public void handle(UdpPacket udpPacket, IpV4Header ipV4Header) throws InterruptedException {
@@ -96,22 +119,13 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             udpDataMessage.setPayload(
                     PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
                             udpDataMessagePayload));
-            this.proxyChannel.writeAndFlush(udpDataMessage).addListener(future -> {
-                ByteBuf udpPacketDataForLog = Unpooled.wrappedBuffer(udpPacket.getData());
-                if (future.isSuccess()) {
-                    Log.d(IpV4UdpPacketHandler.class.getName(),
-                            "Success to send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
-                    Log.v(IpV4UdpPacketHandler.class.getName(), "Udp content going to send[SUCCESS]:\n\n" +
-                            ByteBufUtil.prettyHexDump(udpPacketDataForLog) +
-                            "\n\n");
-                    return;
-                }
-                Log.d(IpV4UdpPacketHandler.class.getName(),
-                        "Fail to send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
-                Log.v(IpV4UdpPacketHandler.class.getName(), "Udp content going to send[FAIL]:\n\n" +
-                        ByteBufUtil.prettyHexDump(udpPacketDataForLog) +
-                        "\n\n", future.cause());
-            });
+            if (!this.proxyChannel.isActive()) {
+                this.proxyChannel = this.prepareUdpChannel().get(120 * 1000, TimeUnit.MILLISECONDS);
+            }
+            this.logDnsQuestion(udpPacket, ipV4Header);
+            proxyChannel.writeAndFlush(udpDataMessage);
+            Log.d(IpV4UdpPacketHandler.class.getName(),
+                    "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
         } catch (Exception e) {
             Log.e(IpV4UdpPacketHandler.class.getName(),
                     "Ip v4 udp handler have exception.", e);
@@ -132,7 +146,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         ipV4HeaderBuilder.fragmentOffset(udpResponseDataOffset);
         ipPacketBuilder.header(ipV4HeaderBuilder.build());
         IpPacket ipPacket = ipPacketBuilder.build();
-        Log.v(IpV4UdpPacketHandler.class.getName(), "Write udp ip packet to device: " + ipPacket);
+        Log.v(IpV4UdpPacketHandler.class.getName(), "<<<<<<<< Write udp ip packet to device: " + ipPacket);
         ByteBuffer ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
         byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
         ipPacketBytes.get(bytesWriteToDevice);

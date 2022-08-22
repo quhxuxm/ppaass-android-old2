@@ -2,8 +2,6 @@ package com.ppaass.agent.protocol.general.icmp;
 
 import com.ppaass.agent.protocol.general.ip.IIpData;
 
-import java.util.Arrays;
-
 public abstract class IcmpPacket<T extends IIcmpType> implements IIpData {
     private byte code;
     private short checksum;
@@ -65,7 +63,7 @@ public abstract class IcmpPacket<T extends IIcmpType> implements IIpData {
                 ", code=" + code +
                 ", checksum=" + checksum +
                 ", unused=" + unused +
-                ", data=" + Arrays.toString(data) +
+                ", data size=" + data.length +
                 '}';
     }
 }

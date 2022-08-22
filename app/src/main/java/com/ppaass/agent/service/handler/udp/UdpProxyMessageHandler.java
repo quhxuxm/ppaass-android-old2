@@ -14,9 +14,16 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.channel.socket.DatagramPacket;
+import io.netty.handler.codec.dns.*;
 import io.netty.util.concurrent.Promise;
 
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
 
 public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
     private final IUdpIpPacketWriter udpIpPacketWriter;
@@ -37,17 +44,64 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
         udpAssociateMessage.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
         AgentMessagePayload udpAssociateMessagePayload = new AgentMessagePayload();
         udpAssociateMessagePayload.setPayloadType(AgentMessagePayloadType.UdpAssociate);
-        NetAddress fakeSourceAddress = new NetAddress();
-        fakeSourceAddress.setHost(new byte[]{1, 1, 1, 1});
-        fakeSourceAddress.setPort((short) 1);
-        fakeSourceAddress.setType(NetAddressType.IpV4);
-        udpAssociateMessagePayload.setSourceAddress(fakeSourceAddress);
         udpAssociateMessage.setPayload(
                 PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
                         udpAssociateMessagePayload));
         ctx.channel().writeAndFlush(udpAssociateMessage);
         Log.d(UdpProxyMessageHandler.class.getName(),
                 "<<<<---- Udp channel write [UdpAssociate] to proxy");
+    }
+
+    private void logDnsAnswer(DefaultDnsRawRecord answer) throws UnknownHostException {
+        try {
+            ByteBuf answerContent = answer.content();
+            String answerContentAsString = null;
+            if (answerContent.isReadable()) {
+                byte[] answerContentBytes = new byte[answerContent.readableBytes()];
+                answerContent.getBytes(0, answerContentBytes);
+                if (answer.type().equals(DnsRecordType.A)) {
+                    Log.v(IpV4UdpPacketHandler.class.getName(),
+                            "<<<<---- #### DNS Answer: " + answer + " ||| content: " +
+                                    InetAddress.getByAddress(answerContentBytes));
+                    return;
+                }
+                if (answer.type().equals(DnsRecordType.CNAME)) {
+                    Log.v(IpV4UdpPacketHandler.class.getName(),
+                            "<<<<---- #### DNS Answer: " + answer + " ||| content: " +
+                                    new String(answerContentBytes, StandardCharsets.US_ASCII));
+                    return;
+                }
+                Log.v(IpV4UdpPacketHandler.class.getName(),
+                        "<<<<---- #### DNS Answer: " + answer);
+            }
+        } catch (Exception e) {
+            Log.e(IpV4UdpPacketHandler.class.getName(), "<<<<----  Error happen when logging DNS Answer.", e);
+        }
+    }
+
+    private void logDnsResponse(ProxyMessagePayload proxyMessagePayload) throws UnknownHostException {
+        NetAddress proxyMessageTargetAddress = proxyMessagePayload.getTargetAddress();
+        NetAddress proxyMessageSourceAddress = proxyMessagePayload.getSourceAddress();
+        InetSocketAddress udpDestAddress =
+                new InetSocketAddress(InetAddress.getByAddress(proxyMessageTargetAddress.getHost()),
+                        proxyMessageTargetAddress.getPort());
+        InetSocketAddress udpSourceAddress =
+                new InetSocketAddress(InetAddress.getByAddress(proxyMessageSourceAddress.getHost()),
+                        proxyMessageSourceAddress.getPort());
+        DatagramPacket dnsPacket =
+                new DatagramPacket(Unpooled.wrappedBuffer(proxyMessagePayload.getData()), udpSourceAddress,
+                        udpDestAddress
+                );
+        EmbeddedChannel logChannel = new EmbeddedChannel();
+        logChannel.pipeline().addLast(new DatagramDnsResponseDecoder());
+        logChannel.writeInbound(dnsPacket);
+        DnsResponse dnsResponse = logChannel.readInbound();
+        Log.v(IpV4UdpPacketHandler.class.getName(), "<<<<---- DNS Response: " + dnsResponse);
+        int numberOfAnswer = dnsResponse.count(DnsSection.ANSWER);
+        for (int i = 0; i < numberOfAnswer; i++) {
+            DefaultDnsRawRecord answer = dnsResponse.recordAt(DnsSection.ANSWER, i);
+            logDnsAnswer(answer);
+        }
     }
 
     @Override
@@ -67,15 +121,18 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
                     new IllegalStateException("Proxy udp associate fail"));
             Log.e(UdpProxyMessageHandler.class.getName(),
                     "<<<<---- Udp associate fail, proxy message: " + proxyMessage);
+            ctx.channel().close();
             return;
         }
         if (ProxyMessagePayloadType.UdpData == proxyMessagePayload.getPayloadType()) {
-            NetAddress udpDestinationAddress = proxyMessagePayload.getTargetAddress();
+            this.logDnsResponse(proxyMessagePayload);
+            NetAddress udpTargetAddress = proxyMessagePayload.getTargetAddress();
             NetAddress udpSourceAddress = proxyMessagePayload.getSourceAddress();
             ByteBuf remoteToDeviceUdpPacketContent = Unpooled.wrappedBuffer(proxyMessagePayload.getData());
             Log.v(UdpProxyMessageHandler.class.getName(),
-                    "Udp content received, source address: [" + udpSourceAddress + "], destination address: [" +
-                            udpDestinationAddress + "], udp packet content:\n\n" +
+                    "<<<<---- Udp content received, source address: [" + udpSourceAddress +
+                            "], target address: [" +
+                            udpTargetAddress + "], udp packet content:\n\n" +
                             ByteBufUtil.prettyHexDump(remoteToDeviceUdpPacketContent) + "\n\n");
             int udpResponseDataOffset = 0;
             short udpIpPacketId = (short) (Math.random() * 10000);
@@ -88,10 +145,10 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
                 UdpPacketBuilder remoteToDeviceUdpPacketBuilder = new UdpPacketBuilder();
                 remoteToDeviceUdpPacketBuilder.data(packetFromRemoteToDeviceContent);
                 remoteToDeviceUdpPacketBuilder.destinationPort(udpSourceAddress.getPort());
-                remoteToDeviceUdpPacketBuilder.sourcePort(udpDestinationAddress.getPort());
+                remoteToDeviceUdpPacketBuilder.sourcePort(udpTargetAddress.getPort());
                 UdpPacket remoteToDeviceUdpPacket = remoteToDeviceUdpPacketBuilder.build();
                 this.udpIpPacketWriter.writeToDevice(udpIpPacketId, remoteToDeviceUdpPacket,
-                        udpDestinationAddress.getHost(),
+                        udpTargetAddress.getHost(),
                         udpSourceAddress.getHost(), udpResponseDataOffset);
                 udpResponseDataOffset += contentLength;
             }
@@ -107,5 +164,6 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
         Log.e(UdpProxyMessageHandler.class.getName(),
                 "<<<<---- Udp channel exception happen on remote channel",
                 cause);
+        ctx.channel().close();
     }
 }

@@ -381,11 +381,12 @@ public class TcpConnection implements Runnable {
         result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
         result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
         result.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
-        result.option(ChannelOption.SO_KEEPALIVE, false);
+        result.option(ChannelOption.SO_KEEPALIVE, true);
         result.option(ChannelOption.AUTO_READ, true);
         result.option(ChannelOption.AUTO_CLOSE, false);
         result.option(ChannelOption.TCP_NODELAY, true);
         result.option(ChannelOption.SO_REUSEADDR, true);
+        result.option(ChannelOption.TCP_FASTOPEN, Integer.MAX_VALUE);
         result.handler(new ChannelInitializer<NioSocketChannel>() {
             @Override
             protected void initChannel(@NonNull NioSocketChannel ch) {
