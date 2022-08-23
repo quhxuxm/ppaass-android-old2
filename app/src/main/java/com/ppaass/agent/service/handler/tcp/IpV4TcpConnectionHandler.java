@@ -46,12 +46,10 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
         Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
             this.connectionRepository.forEach((tcpConnectionRepositoryKey, tcpConnectionWrapper) -> {
                 TcpConnection tcpConnection = tcpConnectionWrapper.connection;
-                Future<?> tcpConnectionTask = tcpConnectionWrapper.connectionTask;
                 long connectionIdleTime = tcpConnection.getLatestActiveTime() - System.currentTimeMillis();
-                if (connectionIdleTime > 1000 * 120 && (tcpConnection.getStatus() == TcpConnectionStatus.LISTEN ||
-                        tcpConnection.getStatus() == TcpConnectionStatus.CLOSED)) {
-                    tcpConnectionTask.cancel(true);
-                    this.connectionRepository.remove(tcpConnectionRepositoryKey);
+                if (connectionIdleTime > 1000 * 120 && (tcpConnection.getStatus().get() == TcpConnectionStatus.LISTEN ||
+                        tcpConnection.getStatus().get() == TcpConnectionStatus.CLOSED)) {
+                    this.unregisterConnection(tcpConnectionRepositoryKey);
                 }
             });
         }, 0, 60, TimeUnit.SECONDS);
@@ -64,7 +62,7 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
                 return result;
             }
             result = new TcpConnectionWrapper();
-            result.connection = new TcpConnection(repositoryKey, this,
+            result.connection = new TcpConnection(repositoryKey,
                     this,
                     this.vpnService);
             this.connectionRepository.put(repositoryKey, result);
@@ -113,12 +111,13 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
     }
 
     @Override
-    public void closeConnection(TcpConnectionRepositoryKey key) {
+    public void unregisterConnection(TcpConnectionRepositoryKey key) {
         synchronized (this) {
             TcpConnectionWrapper tcpConnectionWrapper = this.connectionRepository.remove(key);
             if (tcpConnectionWrapper == null) {
                 return;
             }
+            tcpConnectionWrapper.connection.clear();
             tcpConnectionWrapper.connectionTask.cancel(true);
         }
     }
@@ -145,6 +144,9 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
                                  long acknowledgementNumber) {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.ack(true);
+        if (ackData != null) {
+            tcpPacketBuilder.psh(true);
+        }
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
         tcpPacketBuilder.data(ackData);
         TcpPacket tcpPacket =
@@ -188,11 +190,14 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
         }
     }
 
-    public void writeFinAckToDevice(TcpConnection connection, long sequenceNumber,
+    public void writeFinAckToDevice(byte[] data, TcpConnection connection, long sequenceNumber,
                                     long acknowledgementNumber) {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.ack(true);
         tcpPacketBuilder.fin(true);
+        if (data != null) {
+            tcpPacketBuilder.psh(true);
+        }
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
         TcpPacket tcpPacket =
                 this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);

@@ -3,12 +3,13 @@ package com.ppaass.agent.service.handler.tcp;
 import android.util.Log;
 import com.ppaass.agent.protocol.message.*;
 import com.ppaass.agent.service.IVpnConst;
-import com.ppaass.agent.service.handler.PpaassMessageUtil;
 import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
+import com.ppaass.agent.service.handler.PpaassMessageUtil;
 import com.ppaass.agent.util.UUIDUtil;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.util.AttributeKey;
@@ -16,12 +17,12 @@ import io.netty.util.concurrent.Promise;
 
 public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
     private final ITcpIpPacketWriter tcpIpPacketWriter;
-    private final Promise<Boolean> remoteConnectStatusPromise;
+    private final Promise<Channel> proxyChannelPromise;
 
     public TcpConnectionProxyMessageHandler(ITcpIpPacketWriter tcpIpPacketWriter,
-                                            Promise<Boolean> remoteConnectStatusPromise) {
+                                            Promise<Channel> proxyChannelPromise) {
         this.tcpIpPacketWriter = tcpIpPacketWriter;
-        this.remoteConnectStatusPromise = remoteConnectStatusPromise;
+        this.proxyChannelPromise = proxyChannelPromise;
     }
 
     @Override
@@ -56,31 +57,6 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
                 "<<<<---- Tcp connection write [TcpConnect] to proxy, current connection:  " +
                         tcpConnection);
     }
-//    @Override
-//    public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
-//        AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
-//        TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
-//        if (tcpConnection == null) {
-//            ctx.close();
-//            return;
-//        }
-//        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED) {
-//            Log.d(TcpConnection.class.getName(),
-//                    "<<<<---- Tcp connection CLOSED already, current connection:  " +
-//                            tcpConnection);
-//            ctx.close();
-//            return;
-//        }
-//        if (tcpConnection.getStatus() == TcpConnectionStatus.CLOSED_WAIT) {
-//            this.tcpIpPacketWriter.writeFinAckToDevice(tcpConnection, tcpConnection.getCurrentSequenceNumber(),
-//                    tcpConnection.getCurrentAcknowledgementNumber());
-//            tcpConnection.setStatus(TcpConnectionStatus.LAST_ACK);
-//            tcpConnection.setCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber() + 1);
-//            Log.d(TcpConnection.class.getName(),
-//                    "<<<<---- Move tcp connection from CLOSED_WAIT to  LAST_ACK, current connection:  " +
-//                            tcpConnection);
-//        }
-//    }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Message proxyMessage) {
@@ -92,14 +68,14 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         ProxyMessagePayload proxyMessagePayload =
                 PpaassMessageUtil.INSTANCE.parseProxyMessagePayloadBytes(proxyMessagePayloadBytes);
         if (ProxyMessagePayloadType.TcpConnectSuccess == proxyMessagePayload.getPayloadType()) {
-            this.remoteConnectStatusPromise.setSuccess(true);
+            this.proxyChannelPromise.setSuccess(ctx.channel());
             Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                     "<<<<---- Tcp connection connected to proxy already, current connection:  " +
                             tcpConnection);
             return;
         }
         if (ProxyMessagePayloadType.TcpConnectFail == proxyMessagePayload.getPayloadType()) {
-            this.remoteConnectStatusPromise.setFailure(new IllegalStateException("Proxy connect to remote fail"));
+            this.proxyChannelPromise.setFailure(new IllegalStateException("Proxy connect to remote fail"));
             Log.e(TcpConnectionProxyMessageHandler.class.getName(),
                     "<<<<---- Tcp connection fail connected to proxy already, current connection:  " +
                             tcpConnection);
@@ -111,23 +87,17 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
                 int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
                 byte[] mssData = new byte[mssDataLength];
                 remoteDataBuf.readBytes(mssData);
-                this.tcpIpPacketWriter.writeAckToDevice(mssData, tcpConnection,
-                        tcpConnection.getCurrentSequenceNumber(), tcpConnection.getCurrentAcknowledgementNumber());
-                // Data should write to device first then increase the sequence number
-                if (!tcpConnection.compareAndSetCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber(),
-                        tcpConnection.getCurrentSequenceNumber() + mssData.length)) {
-                    Log.e(TcpConnectionProxyMessageHandler.class.getName(),
-                            "<<<<---- Fail to receive remote data write ack to device because of concurrent set on connection sequence, current connection: " +
-                                    tcpConnection + ", remote data size: " + mssData.length);
-                    return;
-                }
                 Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                         "<<<<---- Receive remote data write ack to device, current connection: " +
                                 tcpConnection + ", remote data size: " + mssData.length);
                 Log.v(TcpConnectionProxyMessageHandler.class.getName(),
-                        "<<<<---- Remote data for current connection: " + tcpConnection + ":\n\n" +
-                                ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(mssData)) +
-                                "\n\n");
+                        "<<<<---- Remote data for current connection: " + tcpConnection + ", remote data:" +
+                                ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(mssData)));
+                this.tcpIpPacketWriter.writeAckToDevice(mssData, tcpConnection,
+                        tcpConnection.getCurrentSequenceNumber().get(),
+                        tcpConnection.getCurrentAcknowledgementNumber().get());
+                // Data should write to device first then increase the sequence number
+                tcpConnection.getCurrentSequenceNumber().getAndAdd(mssData.length);
             }
             return;
         }
@@ -141,12 +111,11 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         Log.d(TcpConnectionProxyMessageHandler.class.getName(),
-                "<<<<---- Tcp connection remote channel closed, current connection: " + tcpConnection);
-        this.tcpIpPacketWriter.writeFinToDevice(tcpConnection, tcpConnection.getCurrentSequenceNumber(),
-                tcpConnection.getCurrentAcknowledgementNumber());
-        tcpConnection.compareAndSetCurrentSequenceNumber(tcpConnection.getCurrentSequenceNumber(),
-                tcpConnection.getCurrentSequenceNumber() + 1);
-        tcpConnection.compareAndSetStatus(tcpConnection.getStatus(), TcpConnectionStatus.FIN_WAIT1);
+                "<<<<---- Tcp connection remote channel closed, current connection: " +
+                        tcpConnection);
+//        this.tcpIpPacketWriter.writeFinAckToDevice(null, tcpConnection,
+//                tcpConnection.getCurrentSequenceNumber().get(),
+//                tcpConnection.getCurrentAcknowledgementNumber().get());
     }
 
     @Override

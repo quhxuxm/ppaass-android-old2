@@ -62,8 +62,8 @@ public class MainActivity extends AppCompatActivity {
                                 }
                                 data.append("<<<<<<<<[").append(timestamp).append("]<<<<<<<<");
                                 testOutput.write(data.toString().getBytes());
-                                testOutput.write("\n\n".getBytes());
                                 testOutput.flush();
+                                testSocket.shutdownOutput();
                                 Log.d(MainActivity.class.getName(), "Finish output !!!!!");
                             } catch (Exception e) {
                                 Log.e(MainActivity.class.getName(), "Exception happen for write data to server.", e);
@@ -78,12 +78,13 @@ public class MainActivity extends AppCompatActivity {
                                     int readSize = testInput.read(readBuf);
                                     if (readSize <= 0) {
                                         Log.d(MainActivity.class.getName(), "Finish input !!!!!");
-                                        return;
+                                        break;
                                     }
                                     byte[] readBufData = Arrays.copyOf(readBuf, readSize);
                                     String data = new String(readBufData);
-                                    Log.v(MainActivity.class.getName(), "Read data from server:\n" + data + "\n");
+                                    Log.v(MainActivity.class.getName(), "Read data from server:" + data );
                                 }
+//                                testSocket.shutdownInput();
                             } catch (Exception e) {
                                 Log.e(MainActivity.class.getName(), "Exception happen for read data from server.", e);
                             } finally {
@@ -91,6 +92,7 @@ public class MainActivity extends AppCompatActivity {
                             }
                         });
                         countDownLatch.await();
+                        testSocket.close();
                         Log.d(MainActivity.class.getName(), "Finish testing !!!!!");
                     } catch (Exception e) {
                         Log.e(MainActivity.class.getName(), "Exception happen for testing.", e);

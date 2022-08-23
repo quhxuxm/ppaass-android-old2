@@ -14,7 +14,7 @@ public interface ITcpIpPacketWriter {
     void writeRstToDevice(TcpConnection connection, long sequenceNumber,
                           long acknowledgementNumber);
 
-    void writeFinAckToDevice(TcpConnection connection, long sequenceNumber,
+    void writeFinAckToDevice(byte[] data, TcpConnection connection, long sequenceNumber,
                              long acknowledgementNumber);
 
     void writeFinToDevice(TcpConnection connection, long sequenceNumber,
