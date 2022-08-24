@@ -7,4 +7,7 @@ public enum TcpConnectionStatus {
     ESTABLISHED,
     LAST_ACK,
     CLOSE_WAIT,
+    FIN_WAIT1,
+    FIN_WAIT2,
+    TIME_WAIT
 }

@@ -48,7 +48,8 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
                 TcpConnection tcpConnection = tcpConnectionWrapper.connection;
                 long connectionIdleTime = tcpConnection.getLatestActiveTime() - System.currentTimeMillis();
                 if (connectionIdleTime > 1000 * 120 && (tcpConnection.getStatus().get() == TcpConnectionStatus.LISTEN ||
-                        tcpConnection.getStatus().get() == TcpConnectionStatus.CLOSED)) {
+                        tcpConnection.getStatus().get() == TcpConnectionStatus.CLOSED ||
+                        tcpConnection.getStatus().get() == TcpConnectionStatus.TIME_WAIT)) {
                     this.unregisterConnection(tcpConnectionRepositoryKey);
                 }
             });
@@ -117,6 +118,7 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
             if (tcpConnectionWrapper == null) {
                 return;
             }
+            tcpConnectionWrapper.connection.getStatus().set(TcpConnectionStatus.CLOSED);
             tcpConnectionWrapper.connection.clear();
             tcpConnectionWrapper.connectionTask.cancel(true);
         }

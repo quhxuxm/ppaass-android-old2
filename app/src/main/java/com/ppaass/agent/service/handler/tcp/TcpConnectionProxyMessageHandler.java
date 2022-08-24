@@ -30,7 +30,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         Log.d(TcpConnectionProxyMessageHandler.class.getName(),
-                "<<<<---- Tcp connection activated, begin to relay remote data to device, current connection:  " +
+                "---->>>> Tcp connection activated, begin to relay remote data to device, current connection:  " +
                         tcpConnection);
         Message messageConnectToRemote = new Message();
         messageConnectToRemote.setId(UUIDUtil.INSTANCE.generateUuid());
@@ -54,7 +54,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
                         connectToRemoteMessagePayload));
         ctx.channel().writeAndFlush(messageConnectToRemote);
         Log.d(TcpConnectionProxyMessageHandler.class.getName(),
-                "<<<<---- Tcp connection write [TcpConnect] to proxy, current connection:  " +
+                "---->>>> Tcp connection write [TcpConnect] to proxy, current connection:  " +
                         tcpConnection);
     }
 
@@ -113,9 +113,15 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                 "<<<<---- Tcp connection remote channel closed, current connection: " +
                         tcpConnection);
-//        this.tcpIpPacketWriter.writeFinAckToDevice(null, tcpConnection,
-//                tcpConnection.getCurrentSequenceNumber().get(),
-//                tcpConnection.getCurrentAcknowledgementNumber().get());
+        if (tcpConnection.getStatus().get() == TcpConnectionStatus.ESTABLISHED) {
+            tcpConnection.getStatus().set(TcpConnectionStatus.FIN_WAIT1);
+            this.tcpIpPacketWriter.writeFinToDevice(tcpConnection,
+                    tcpConnection.getCurrentSequenceNumber().get(),
+                    tcpConnection.getCurrentAcknowledgementNumber().get());
+            Log.d(TcpConnectionProxyMessageHandler.class.getName(),
+                    "<<<<---- Tcp connection remote channel closed send Fin to device, current connection: " +
+                            tcpConnection);
+        }
     }
 
     @Override

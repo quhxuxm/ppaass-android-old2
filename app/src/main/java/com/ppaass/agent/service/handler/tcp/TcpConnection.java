@@ -111,6 +111,27 @@ public class TcpConnection implements Runnable {
                                         this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
                         continue;
                     }
+                    if (TcpConnectionStatus.FIN_WAIT1 == this.status.get()) {
+                        Log.d(TcpConnection.class.getName(),
+                                ">>>>>>>> Receive ACK and begin to switch connection to FIN_WAIT2, current connection: " +
+                                        this +
+                                        "; device inbound tcp packet: " + deviceInboundTcpPacket);
+                        this.status.set(TcpConnectionStatus.FIN_WAIT2);
+                        continue;
+                    }
+                    if (TcpConnectionStatus.FIN_WAIT2 == this.status.get()) {
+                        this.currentAcknowledgementNumber.getAndIncrement();
+                        this.currentSequenceNumber.getAndIncrement();
+                        this.tcpIpPacketWriter.writeAckToDevice(null, this,
+                                this.currentSequenceNumber.get(),
+                                this.currentAcknowledgementNumber.get());
+                        Log.d(TcpConnection.class.getName(),
+                                ">>>>>>>> Receive ACK and begin to switch connection to TIME_WAIT, current connection: " +
+                                        this +
+                                        "; device inbound tcp packet: " + deviceInboundTcpPacket);
+                        this.status.set(TcpConnectionStatus.TIME_WAIT);
+                        continue;
+                    }
                     if (TcpConnectionStatus.LAST_ACK == this.status.get()) {
                         this.closeConnection();
                         continue;
@@ -125,7 +146,8 @@ public class TcpConnection implements Runnable {
                                 ">>>>>>>> Incorrect status [receive FIN ACK but connection not ESTABLISHED], reset and close connection, current connection: " +
                                         this +
                                         ", device inbound tcp packet: " + deviceInboundTcpPacket);
-                        this.tcpIpPacketWriter.writeRstToDevice(this, deviceInboundTcpHeader.getAcknowledgementNumber(),
+                        this.tcpIpPacketWriter.writeRstToDevice(this,
+                                deviceInboundTcpHeader.getAcknowledgementNumber(),
                                 deviceInboundTcpHeader.getSequenceNumber());
                         this.closeConnection();
                         continue;
@@ -135,7 +157,7 @@ public class TcpConnection implements Runnable {
                         continue;
                     }
                     if (TcpConnectionStatus.ESTABLISHED == this.status.get()) {
-                        this.forwardDeviceData(deviceInboundTcpPacket);
+                        this.relayDeviceData(deviceInboundTcpPacket);
                         continue;
                     }
                     if (this.status.get() == TcpConnectionStatus.LAST_ACK) {
@@ -179,11 +201,14 @@ public class TcpConnection implements Runnable {
                         this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
         this.status.set(TcpConnectionStatus.CLOSE_WAIT);
         //Device maybe carry data together with Fin(ACK)
-        this.forwardDeviceData(deviceInboundTcpPacket);
+        this.relayDeviceData(deviceInboundTcpPacket);
         this.proxyChannel.close().addListener(future -> {
             long ackNumberForCloseWait = TcpConnection.this.getCurrentAcknowledgementNumber().get();
-            TcpConnection.this.getStatus().set(TcpConnectionStatus.LAST_ACK);
             TcpConnection.this.remoteBootstrap.config().group().shutdownGracefully();
+            TcpConnection.this.getStatus().set(TcpConnectionStatus.LAST_ACK);
+            this.tcpIpPacketWriter.writeFinAckToDevice(null, TcpConnection.this,
+                    TcpConnection.this.getCurrentSequenceNumber().get(),
+                    TcpConnection.this.getCurrentAcknowledgementNumber().get());
             Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                     "<<<<----  Connection switched to LAST_ACK, ack to device with [" +
                             ackNumberForCloseWait + "] current connection: " +
@@ -191,25 +216,25 @@ public class TcpConnection implements Runnable {
         });
     }
 
-    private void forwardDeviceData(TcpPacket deviceInboundTcpPacket) {
+    private void relayDeviceData(TcpPacket deviceInboundTcpPacket) {
         int dataLength = deviceInboundTcpPacket.getData().length;
         if (dataLength == 0) {
 //            TcpConnection.this.tcpIpPacketWriter.writeAckToDevice(null, TcpConnection.this,
 //                    TcpConnection.this.currentSequenceNumber.get(),
 //                    TcpConnection.this.currentAcknowledgementNumber.get());
             Log.d(TcpConnection.class.getName(),
-                    ">>>>>>>> Nothing to forward device inbound data to proxy, current connection: " +
+                    ">>>>>>>> Nothing to relay device inbound data to proxy, current connection: " +
                             this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
             return;
         }
         Log.d(TcpConnection.class.getName(),
-                ">>>>>>>> Begin to forward device inbound data to proxy, current connection: " +
+                ">>>>>>>> Begin to relay device inbound data to proxy, current connection: " +
                         this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
-        Message messageRelayToRemote = new Message();
-        messageRelayToRemote.setId(UUIDUtil.INSTANCE.generateUuid());
-        messageRelayToRemote.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
-        messageRelayToRemote.setPayloadEncryptionType(PayloadEncryptionType.Aes);
-        messageRelayToRemote.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
+        Message messageRelayToProxy = new Message();
+        messageRelayToProxy.setId(UUIDUtil.INSTANCE.generateUuid());
+        messageRelayToProxy.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
+        messageRelayToProxy.setPayloadEncryptionType(PayloadEncryptionType.Aes);
+        messageRelayToProxy.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
         AgentMessagePayload agentMessagePayload = new AgentMessagePayload();
         agentMessagePayload.setData(deviceInboundTcpPacket.getData());
         agentMessagePayload.setPayloadType(AgentMessagePayloadType.TcpData);
@@ -223,31 +248,30 @@ public class TcpConnection implements Runnable {
         targetAddress.setPort((short) this.repositoryKey.getDestinationPort());
         targetAddress.setType(NetAddressType.IpV4);
         agentMessagePayload.setTargetAddress(targetAddress);
-        messageRelayToRemote.setPayload(
+        messageRelayToProxy.setPayload(
                 PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
                         agentMessagePayload));
-        this.proxyChannel.writeAndFlush(messageRelayToRemote).addListener((ChannelFutureListener) future -> {
+        TcpConnection.this.currentAcknowledgementNumber.addAndGet(
+                deviceInboundTcpPacket.getData().length);
+        this.proxyChannel.writeAndFlush(messageRelayToProxy).addListener((ChannelFutureListener) future -> {
             //Ack every device inbound packet.
-            TcpHeader forwardingTimeDeviceInboundTcpHeader = deviceInboundTcpPacket.getHeader();
-            long forwardingTimeDeviceInboundTcpPacketDataLength = deviceInboundTcpPacket.getData().length;
+            long ackNumber = TcpConnection.this.currentAcknowledgementNumber.get();
             if (future.isSuccess()) {
-                TcpConnection.this.currentAcknowledgementNumber.addAndGet(
-                        forwardingTimeDeviceInboundTcpPacketDataLength);
                 Log.d(TcpConnection.class.getName(),
-                        "<<<<---- Success to forward device inbound data to proxy, ack to device with [" +
-                                TcpConnection.this.currentAcknowledgementNumber.get() +
+                        "<<<<---- Success to relay device inbound data to proxy, ack to device with [" +
+                                ackNumber +
                                 "], current connection: " +
-                                TcpConnection.this + "; forwarding time device inbound tcp packet: " +
+                                TcpConnection.this + "; relay time device inbound tcp packet: " +
                                 deviceInboundTcpPacket);
                 TcpConnection.this.tcpIpPacketWriter.writeAckToDevice(null, TcpConnection.this,
                         TcpConnection.this.currentSequenceNumber.get(),
-                        TcpConnection.this.currentAcknowledgementNumber.get());
+                        ackNumber);
             } else {
                 Log.e(TcpConnection.class.getName(),
-                        "<<<<---- Fail to forward device inbound data to proxy, ack to device with [" +
-                                forwardingTimeDeviceInboundTcpHeader.getSequenceNumber() +
+                        "<<<<---- Fail to relay device inbound data to proxy, ack to device with [" +
+                                ackNumber +
                                 "], current connection: " +
-                                TcpConnection.this + "; forwarding time device inbound tcp packet: " +
+                                TcpConnection.this + "; relay time device inbound tcp packet: " +
                                 deviceInboundTcpPacket,
                         future.cause());
             }
@@ -256,7 +280,7 @@ public class TcpConnection implements Runnable {
 
     private void switchConnectionToEstablished(TcpPacket deviceInboundTcpPacket) {
         Log.d(TcpConnection.class.getName(),
-                ">>>>>>>> Receive ACK and switch connection to ESTABLISHED, current connection: " + this +
+                ">>>>>>>> Receive ACK and begin to switch connection to ESTABLISHED, current connection: " + this +
                         "; device inbound tcp packet: " + deviceInboundTcpPacket);
         TcpHeader deviceInboundTcpHeader = deviceInboundTcpPacket.getHeader();
         // Receive ack of previous sync-ack.
