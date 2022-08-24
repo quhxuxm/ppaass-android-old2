@@ -28,13 +28,11 @@ import java.nio.charset.StandardCharsets;
 public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
     private final IUdpIpPacketWriter udpIpPacketWriter;
     private final Promise<Channel> udpAssociateChannelPromise;
-    private final Promise<Boolean> udpReceivedPromise;
 
     public UdpProxyMessageHandler(IUdpIpPacketWriter udpIpPacketWriter,
-                                  Promise<Channel> udpAssociateChannelPromise, Promise<Boolean> udpReceivedPromise) {
+                                  Promise<Channel> udpAssociateChannelPromise) {
         this.udpIpPacketWriter = udpIpPacketWriter;
         this.udpAssociateChannelPromise = udpAssociateChannelPromise;
-        this.udpReceivedPromise = udpReceivedPromise;
     }
 
     @Override
@@ -81,28 +79,32 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
         }
     }
 
-    private void logDnsResponse(ProxyMessagePayload proxyMessagePayload) throws UnknownHostException {
-        NetAddress proxyMessageTargetAddress = proxyMessagePayload.getTargetAddress();
-        NetAddress proxyMessageSourceAddress = proxyMessagePayload.getSourceAddress();
-        InetSocketAddress udpDestAddress =
-                new InetSocketAddress(InetAddress.getByAddress(proxyMessageTargetAddress.getHost()),
-                        proxyMessageTargetAddress.getPort());
-        InetSocketAddress udpSourceAddress =
-                new InetSocketAddress(InetAddress.getByAddress(proxyMessageSourceAddress.getHost()),
-                        proxyMessageSourceAddress.getPort());
-        DatagramPacket dnsPacket =
-                new DatagramPacket(Unpooled.wrappedBuffer(proxyMessagePayload.getData()), udpSourceAddress,
-                        udpDestAddress
-                );
-        EmbeddedChannel logChannel = new EmbeddedChannel();
-        logChannel.pipeline().addLast(new DatagramDnsResponseDecoder());
-        logChannel.writeInbound(dnsPacket);
-        DnsResponse dnsResponse = logChannel.readInbound();
-        Log.v(IpV4UdpPacketHandler.class.getName(), "<<<<---- DNS Response: " + dnsResponse);
-        int numberOfAnswer = dnsResponse.count(DnsSection.ANSWER);
-        for (int i = 0; i < numberOfAnswer; i++) {
-            DefaultDnsRawRecord answer = dnsResponse.recordAt(DnsSection.ANSWER, i);
-            logDnsAnswer(answer);
+    private void logDnsResponse(ProxyMessagePayload proxyMessagePayload) {
+        try {
+            NetAddress proxyMessageTargetAddress = proxyMessagePayload.getTargetAddress();
+            NetAddress proxyMessageSourceAddress = proxyMessagePayload.getSourceAddress();
+            InetSocketAddress udpDestAddress =
+                    new InetSocketAddress(InetAddress.getByAddress(proxyMessageTargetAddress.getHost()),
+                            proxyMessageTargetAddress.getPort());
+            InetSocketAddress udpSourceAddress =
+                    new InetSocketAddress(InetAddress.getByAddress(proxyMessageSourceAddress.getHost()),
+                            proxyMessageSourceAddress.getPort());
+            DatagramPacket dnsPacket =
+                    new DatagramPacket(Unpooled.wrappedBuffer(proxyMessagePayload.getData()), udpSourceAddress,
+                            udpDestAddress
+                    );
+            EmbeddedChannel logChannel = new EmbeddedChannel();
+            logChannel.pipeline().addLast(new DatagramDnsResponseDecoder());
+            logChannel.writeInbound(dnsPacket);
+            DnsResponse dnsResponse = logChannel.readInbound();
+            Log.v(IpV4UdpPacketHandler.class.getName(), "<<<<---- DNS Response: " + dnsResponse);
+            int numberOfAnswer = dnsResponse.count(DnsSection.ANSWER);
+            for (int i = 0; i < numberOfAnswer; i++) {
+                DefaultDnsRawRecord answer = dnsResponse.recordAt(DnsSection.ANSWER, i);
+                logDnsAnswer(answer);
+            }
+        } catch (Exception e) {
+            Log.e(UdpProxyMessageHandler.class.getName(), "---->>>> Error happen when logging DNS Response.", e);
         }
     }
 
@@ -156,10 +158,6 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
             }
             return;
         }
-        if (ProxyMessagePayloadType.UdpDataComplete == proxyMessagePayload.getPayloadType()) {
-            this.udpReceivedPromise.setSuccess(true);
-            return;
-        }
         if (ProxyMessagePayloadType.HeartbeatSuccess == proxyMessagePayload.getPayloadType()) {
             return;
         }
@@ -170,7 +168,6 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
         Log.e(UdpProxyMessageHandler.class.getName(),
                 "<<<<---- Udp channel exception happen on remote channel",
                 cause);
-        this.udpReceivedPromise.setFailure(cause);
         ctx.channel().close();
     }
 }

@@ -31,36 +31,30 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     private final FileOutputStream rawDeviceOutputStream;
     private final VpnService vpnService;
-
-    private static class UdpPromiseWrapper {
-        private final Promise<Channel> udpAssociatePromise;
-        private final Promise<Boolean> udpReceivedPromise;
-
-        private UdpPromiseWrapper(Promise<Channel> udpAssociatePromise, Promise<Boolean> udpReceivedPromise) {
-            this.udpAssociatePromise = udpAssociatePromise;
-            this.udpReceivedPromise = udpReceivedPromise;
-        }
-    }
+    private final ExecutorService udpThreadPool;
+    private Channel proxyChannel;
 
     public IpV4UdpPacketHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService)
             throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
+        this.udpThreadPool = Executors.newWorkStealingPool(32);
+        this.proxyChannel = this.prepareUdpChannel();
     }
 
-    private UdpPromiseWrapper prepareUdpChannel() throws UnknownHostException, InterruptedException {
+    private Channel prepareUdpChannel() throws Exception {
         InetSocketAddress proxyAddress =
                 new InetSocketAddress(InetAddress.getByName(IVpnConst.PPAASS_PROXY_IP), IVpnConst.PPAASS_PROXY_PORT);
         NioEventLoopGroup udpNioEventLoopGroup = new NioEventLoopGroup(3);
         Promise<Channel> udpAssociatePromise = new DefaultPromise<>(udpNioEventLoopGroup.next());
-        Promise<Boolean> udpReceivedPromise = new DefaultPromise<>(udpNioEventLoopGroup.next());
         Bootstrap udpBootstrap = new Bootstrap();
         udpBootstrap.group(udpNioEventLoopGroup);
         udpBootstrap.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
@@ -77,13 +71,12 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             protected void initChannel(@NonNull NioSocketChannel ch) {
                 ch.pipeline().addLast(new PpaassMessageDecoder());
                 ch.pipeline()
-                        .addLast(new UdpProxyMessageHandler(IpV4UdpPacketHandler.this, udpAssociatePromise,
-                                udpReceivedPromise));
+                        .addLast(new UdpProxyMessageHandler(IpV4UdpPacketHandler.this, udpAssociatePromise));
                 ch.pipeline().addLast(new PpaassMessageEncoder(false));
             }
         });
         udpBootstrap.connect(proxyAddress).sync();
-        return new UdpPromiseWrapper(udpAssociatePromise, udpReceivedPromise);
+        return udpAssociatePromise.get(120, TimeUnit.SECONDS);
     }
 
     private void logDnsQuestion(UdpPacket udpPacket, IpV4Header ipHeader) {
@@ -107,39 +100,41 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     }
 
     public void handle(UdpPacket udpPacket, IpV4Header ipV4Header) throws InterruptedException {
-        try {
-            NetAddress sourceAddress = new NetAddress();
-            sourceAddress.setHost(ipV4Header.getSourceAddress());
-            sourceAddress.setPort(udpPacket.getHeader().getSourcePort());
-            sourceAddress.setType(NetAddressType.IpV4);
-            NetAddress targetAddress = new NetAddress();
-            targetAddress.setType(NetAddressType.IpV4);
-            targetAddress.setHost(ipV4Header.getDestinationAddress());
-            targetAddress.setPort(udpPacket.getHeader().getDestinationPort());
-            Message udpDataMessage = new Message();
-            udpDataMessage.setId(UUIDUtil.INSTANCE.generateUuid());
-            udpDataMessage.setUserToken(IVpnConst.PPAASS_USER_TOKEN);
-            udpDataMessage.setPayloadEncryptionType(PayloadEncryptionType.Aes);
-            udpDataMessage.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
-            AgentMessagePayload udpDataMessagePayload = new AgentMessagePayload();
-            udpDataMessagePayload.setPayloadType(AgentMessagePayloadType.UdpData);
-            udpDataMessagePayload.setSourceAddress(sourceAddress);
-            udpDataMessagePayload.setTargetAddress(targetAddress);
-            udpDataMessagePayload.setData(udpPacket.getData());
-            udpDataMessage.setPayload(
-                    PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
-                            udpDataMessagePayload));
-            UdpPromiseWrapper promiseWrapper = this.prepareUdpChannel();
-            Channel proxyChannel = promiseWrapper.udpAssociatePromise.get(120, TimeUnit.SECONDS);
-            this.logDnsQuestion(udpPacket, ipV4Header);
-            proxyChannel.writeAndFlush(udpDataMessage);
-            promiseWrapper.udpReceivedPromise.get(120, TimeUnit.SECONDS);
-            Log.d(IpV4UdpPacketHandler.class.getName(),
-                    "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
-        } catch (Exception e) {
-            Log.e(IpV4UdpPacketHandler.class.getName(),
-                    "Ip v4 udp handler have exception.", e);
-        }
+        this.udpThreadPool.submit(() -> {
+            try {
+                NetAddress sourceAddress = new NetAddress();
+                sourceAddress.setHost(ipV4Header.getSourceAddress());
+                sourceAddress.setPort(udpPacket.getHeader().getSourcePort());
+                sourceAddress.setType(NetAddressType.IpV4);
+                NetAddress targetAddress = new NetAddress();
+                targetAddress.setType(NetAddressType.IpV4);
+                targetAddress.setHost(ipV4Header.getDestinationAddress());
+                targetAddress.setPort(udpPacket.getHeader().getDestinationPort());
+                Message udpDataMessage = new Message();
+                udpDataMessage.setId(UUIDUtil.INSTANCE.generateUuid());
+                udpDataMessage.setUserToken(IVpnConst.PPAASS_USER_TOKEN);
+                udpDataMessage.setPayloadEncryptionType(PayloadEncryptionType.Aes);
+                udpDataMessage.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
+                AgentMessagePayload udpDataMessagePayload = new AgentMessagePayload();
+                udpDataMessagePayload.setPayloadType(AgentMessagePayloadType.UdpData);
+                udpDataMessagePayload.setSourceAddress(sourceAddress);
+                udpDataMessagePayload.setTargetAddress(targetAddress);
+                udpDataMessagePayload.setData(udpPacket.getData());
+                udpDataMessage.setPayload(
+                        PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
+                                udpDataMessagePayload));
+                this.logDnsQuestion(udpPacket, ipV4Header);
+                if (!this.proxyChannel.isActive()) {
+                    this.proxyChannel = this.prepareUdpChannel();
+                }
+                this.proxyChannel.writeAndFlush(udpDataMessage);
+                Log.d(IpV4UdpPacketHandler.class.getName(),
+                        "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
+            } catch (Exception e) {
+                Log.e(IpV4UdpPacketHandler.class.getName(),
+                        "Ip v4 udp handler have exception.", e);
+            }
+        });
     }
 
     @Override
