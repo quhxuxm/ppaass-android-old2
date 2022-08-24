@@ -130,10 +130,10 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
                     PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
                             udpDataMessagePayload));
             UdpPromiseWrapper promiseWrapper = this.prepareUdpChannel();
-            Channel proxyChannel = promiseWrapper.udpAssociatePromise.get(10, TimeUnit.SECONDS);
+            Channel proxyChannel = promiseWrapper.udpAssociatePromise.get(120, TimeUnit.SECONDS);
             this.logDnsQuestion(udpPacket, ipV4Header);
             proxyChannel.writeAndFlush(udpDataMessage);
-            promiseWrapper.udpReceivedPromise.get(20, TimeUnit.SECONDS);
+            promiseWrapper.udpReceivedPromise.get(120, TimeUnit.SECONDS);
             Log.d(IpV4UdpPacketHandler.class.getName(),
                     "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
         } catch (Exception e) {
