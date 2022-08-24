@@ -38,20 +38,29 @@ import java.util.concurrent.TimeUnit;
 public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     private final FileOutputStream rawDeviceOutputStream;
     private final VpnService vpnService;
-    private Channel proxyChannel;
+
+    private static class UdpPromiseWrapper {
+        private final Promise<Channel> udpAssociatePromise;
+        private final Promise<Boolean> udpReceivedPromise;
+
+        private UdpPromiseWrapper(Promise<Channel> udpAssociatePromise, Promise<Boolean> udpReceivedPromise) {
+            this.udpAssociatePromise = udpAssociatePromise;
+            this.udpReceivedPromise = udpReceivedPromise;
+        }
+    }
 
     public IpV4UdpPacketHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService)
             throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
-        this.proxyChannel = this.prepareUdpChannel().get(120 * 1000, TimeUnit.MILLISECONDS);
     }
 
-    private Promise<Channel> prepareUdpChannel() throws UnknownHostException, InterruptedException {
+    private UdpPromiseWrapper prepareUdpChannel() throws UnknownHostException, InterruptedException {
         InetSocketAddress proxyAddress =
                 new InetSocketAddress(InetAddress.getByName(IVpnConst.PPAASS_PROXY_IP), IVpnConst.PPAASS_PROXY_PORT);
-        NioEventLoopGroup udpNioEventLoopGroup = new NioEventLoopGroup(4);
+        NioEventLoopGroup udpNioEventLoopGroup = new NioEventLoopGroup(3);
         Promise<Channel> udpAssociatePromise = new DefaultPromise<>(udpNioEventLoopGroup.next());
+        Promise<Boolean> udpReceivedPromise = new DefaultPromise<>(udpNioEventLoopGroup.next());
         Bootstrap udpBootstrap = new Bootstrap();
         udpBootstrap.group(udpNioEventLoopGroup);
         udpBootstrap.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
@@ -68,12 +77,13 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             protected void initChannel(@NonNull NioSocketChannel ch) {
                 ch.pipeline().addLast(new PpaassMessageDecoder());
                 ch.pipeline()
-                        .addLast(new UdpProxyMessageHandler(IpV4UdpPacketHandler.this, udpAssociatePromise));
+                        .addLast(new UdpProxyMessageHandler(IpV4UdpPacketHandler.this, udpAssociatePromise,
+                                udpReceivedPromise));
                 ch.pipeline().addLast(new PpaassMessageEncoder(false));
             }
         });
         udpBootstrap.connect(proxyAddress).sync();
-        return udpAssociatePromise;
+        return new UdpPromiseWrapper(udpAssociatePromise, udpReceivedPromise);
     }
 
     private void logDnsQuestion(UdpPacket udpPacket, IpV4Header ipHeader) {
@@ -119,11 +129,11 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             udpDataMessage.setPayload(
                     PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
                             udpDataMessagePayload));
-            if (!this.proxyChannel.isActive()) {
-                this.proxyChannel = this.prepareUdpChannel().get(120 * 1000, TimeUnit.MILLISECONDS);
-            }
+            UdpPromiseWrapper promiseWrapper = this.prepareUdpChannel();
+            Channel proxyChannel = promiseWrapper.udpAssociatePromise.get(10, TimeUnit.SECONDS);
             this.logDnsQuestion(udpPacket, ipV4Header);
             proxyChannel.writeAndFlush(udpDataMessage);
+            promiseWrapper.udpReceivedPromise.get(20, TimeUnit.SECONDS);
             Log.d(IpV4UdpPacketHandler.class.getName(),
                     "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
         } catch (Exception e) {

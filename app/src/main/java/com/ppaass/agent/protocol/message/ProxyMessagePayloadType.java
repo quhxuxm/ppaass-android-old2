@@ -7,6 +7,7 @@ public enum ProxyMessagePayloadType {
     UdpAssociateSuccess((byte)221),
     UdpAssociateFail((byte)222),
     UdpData((byte)224),
+    UdpDataComplete((byte)225),
     UdpDataRelayFail((byte)223),
     HeartbeatSuccess((byte)230);
     private final byte value;
@@ -37,6 +38,9 @@ public enum ProxyMessagePayloadType {
         }
         if (UdpData.getValue() == value) {
             return UdpData;
+        }
+        if (UdpDataComplete.getValue() == value) {
+            return UdpDataComplete;
         }
         if (UdpDataRelayFail.getValue() == value) {
             return UdpDataRelayFail;

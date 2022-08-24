@@ -28,11 +28,13 @@ import java.nio.charset.StandardCharsets;
 public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
     private final IUdpIpPacketWriter udpIpPacketWriter;
     private final Promise<Channel> udpAssociateChannelPromise;
+    private final Promise<Boolean> udpReceivedPromise;
 
     public UdpProxyMessageHandler(IUdpIpPacketWriter udpIpPacketWriter,
-                                  Promise<Channel> udpAssociateChannelPromise) {
+                                  Promise<Channel> udpAssociateChannelPromise, Promise<Boolean> udpReceivedPromise) {
         this.udpIpPacketWriter = udpIpPacketWriter;
         this.udpAssociateChannelPromise = udpAssociateChannelPromise;
+        this.udpReceivedPromise = udpReceivedPromise;
     }
 
     @Override
@@ -154,6 +156,10 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
             }
             return;
         }
+        if (ProxyMessagePayloadType.UdpDataComplete == proxyMessagePayload.getPayloadType()) {
+            this.udpReceivedPromise.setSuccess(true);
+            return;
+        }
         if (ProxyMessagePayloadType.HeartbeatSuccess == proxyMessagePayload.getPayloadType()) {
             return;
         }
@@ -164,6 +170,7 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
         Log.e(UdpProxyMessageHandler.class.getName(),
                 "<<<<---- Udp channel exception happen on remote channel",
                 cause);
+        this.udpReceivedPromise.setFailure(cause);
         ctx.channel().close();
     }
 }
