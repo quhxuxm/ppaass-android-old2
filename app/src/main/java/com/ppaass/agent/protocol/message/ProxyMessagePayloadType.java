@@ -8,7 +8,11 @@ public enum ProxyMessagePayloadType {
     UdpAssociateFail((byte) 222),
     UdpData((byte) 224),
     UdpDataRelayFail((byte) 223),
+    DomainResolveSuccess((byte)225),
+    DomainResolveFail((byte)226),
     HeartbeatSuccess((byte) 230);
+
+
     private final byte value;
 
     ProxyMessagePayloadType(byte value) {
@@ -43,6 +47,12 @@ public enum ProxyMessagePayloadType {
         }
         if (HeartbeatSuccess.getValue() == value) {
             return HeartbeatSuccess;
+        }
+        if (DomainResolveSuccess.getValue() == value) {
+            return DomainResolveSuccess;
+        }
+        if (DomainResolveFail.getValue() == value) {
+            return DomainResolveFail;
         }
         throw new UnsupportedOperationException();
     }
