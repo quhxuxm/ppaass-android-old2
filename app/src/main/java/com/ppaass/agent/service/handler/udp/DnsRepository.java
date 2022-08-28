@@ -4,14 +4,14 @@ import java.net.InetAddress;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.WeakHashMap;
 
 public class DnsRepository {
     public static DnsRepository INSTANCE = new DnsRepository();
     private final Map<String, Set<InetAddress>> addresses;
 
     private DnsRepository() {
-        this.addresses = new ConcurrentHashMap<>();
+        this.addresses = new WeakHashMap<>();
     }
 
     public synchronized Set<InetAddress> getAddress(String domainName) {
