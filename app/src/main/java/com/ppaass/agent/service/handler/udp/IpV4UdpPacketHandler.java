@@ -173,6 +173,9 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
                     "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
         } catch (Exception e) {
             Log.e(IpV4UdpPacketHandler.class.getName(), "Ip v4 udp handler have exception.", e);
+            if(this.proxyChannel!=null) {
+                this.proxyChannel.close();
+            }
         }
     }
 
