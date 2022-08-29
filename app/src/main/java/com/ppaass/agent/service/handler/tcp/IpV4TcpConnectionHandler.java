@@ -47,13 +47,11 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
             this.connectionRepository.forEach((tcpConnectionRepositoryKey, tcpConnectionWrapper) -> {
                 TcpConnection tcpConnection = tcpConnectionWrapper.connection;
                 long connectionIdleTime = tcpConnection.getLatestActiveTime() - System.currentTimeMillis();
-                if (connectionIdleTime > 1000 * 120 && (tcpConnection.getStatus().get() == TcpConnectionStatus.LISTEN ||
-                        tcpConnection.getStatus().get() == TcpConnectionStatus.CLOSED ||
-                        tcpConnection.getStatus().get() == TcpConnectionStatus.TIME_WAIT)) {
+                if (connectionIdleTime > 1000 * 120) {
                     this.unregisterConnection(tcpConnectionRepositoryKey);
                 }
             });
-        }, 0, 60, TimeUnit.SECONDS);
+        }, 0, 10, TimeUnit.SECONDS);
     }
 
     private TcpConnectionWrapper prepareTcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket) {

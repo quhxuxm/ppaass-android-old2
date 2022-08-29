@@ -37,7 +37,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     private final FileOutputStream rawDeviceOutputStream;
     private final VpnService vpnService;
     private final ObjectMapper objectMapper;
-    private final Channel proxyChannel;
+    private Channel proxyChannel;
 
     public IpV4UdpPacketHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService) throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
@@ -165,6 +165,9 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             domainResolveMessagePayload.setData(domainResolveRequestBytes);
             domainResolveMessage.setPayload(
                     PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(domainResolveMessagePayload));
+            if (!this.proxyChannel.isActive()) {
+                this.proxyChannel = this.initializeProxyChannel();
+            }
             this.proxyChannel.writeAndFlush(domainResolveMessage);
             Log.d(IpV4UdpPacketHandler.class.getName(),
                     "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
