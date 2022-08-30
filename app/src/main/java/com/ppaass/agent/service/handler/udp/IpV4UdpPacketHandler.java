@@ -14,6 +14,8 @@ import com.ppaass.agent.service.handler.IUdpIpPacketWriter;
 import com.ppaass.agent.service.handler.PpaassMessageDecoder;
 import com.ppaass.agent.service.handler.PpaassMessageEncoder;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
+import com.ppaass.agent.service.handler.dns.DnsEntry;
+import com.ppaass.agent.service.handler.dns.DnsRepository;
 import com.ppaass.agent.util.UUIDUtil;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
@@ -31,7 +33,6 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.Set;
 
 public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     private final FileOutputStream rawDeviceOutputStream;
@@ -104,8 +105,9 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         int dnsQueryId = dnsQuery.id();
         DefaultDnsQuestion dnsQuestion = dnsQuery.recordAt(DnsSection.QUESTION);
         String dnsQueryName = dnsQuestion.name();
-        Set<InetAddress> cachedAddresses = DnsRepository.INSTANCE.getAddress(dnsQueryName);
-        if (cachedAddresses != null) {
+        DnsEntry cachedDnsEntry = DnsRepository.INSTANCE.getAddress(dnsQueryName);
+        if (cachedDnsEntry != null) {
+            cachedDnsEntry.setLastAccessTime(System.currentTimeMillis());
             InetSocketAddress sourceAddress =
                     new InetSocketAddress(InetAddress.getByAddress(ipV4Header.getSourceAddress()),
                             udpPacket.getHeader().getSourcePort());
@@ -114,7 +116,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
                             udpPacket.getHeader().getDestinationPort());
             DatagramDnsResponse cachedDnsResponse = new DatagramDnsResponse(sourceAddress, targetAddress, dnsQueryId);
             cachedDnsResponse.addRecord(DnsSection.QUESTION, dnsQuestion);
-            cachedAddresses.forEach(inetAddress -> {
+            cachedDnsEntry.getAddresses().forEach(inetAddress -> {
                 DefaultDnsRawRecord answerRecord =
                         new DefaultDnsRawRecord(dnsQueryName, DnsRecordType.A, 120,
                                 Unpooled.wrappedBuffer(inetAddress.getAddress()));
@@ -173,7 +175,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
                     "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
         } catch (Exception e) {
             Log.e(IpV4UdpPacketHandler.class.getName(), "Ip v4 udp handler have exception.", e);
-            if(this.proxyChannel!=null) {
+            if (this.proxyChannel != null) {
                 this.proxyChannel.close();
             }
         }

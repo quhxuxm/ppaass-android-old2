@@ -9,10 +9,10 @@ public interface IVpnConst {
     int TCP_MSS = MTU - 40;
     int TCP_WINDOW = 65535;
     int UDP_HEADER_LENGTH = 8;
-    //     String DNS = "192.168.31.1";
+//         String DNS = "192.168.31.1";
 //    String DNS = "10.246.128.21";
-//        String DNS = "149.28.219.182";
-    String DNS = "8.8.8.8";
+        String DNS = "149.28.219.182";
+//    String DNS = "8.8.8.8";
 //    String DNS = "127.0.0.53";
 //        String PPAASS_PROXY_IP="192.168.31.200";
     String PPAASS_PROXY_IP = "149.28.219.182";
