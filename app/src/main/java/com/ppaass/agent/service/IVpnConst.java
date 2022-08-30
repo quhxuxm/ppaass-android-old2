@@ -16,7 +16,7 @@ public interface IVpnConst {
 //    String DNS = "127.0.0.53";
 //        String PPAASS_PROXY_IP="192.168.31.200";
     String PPAASS_PROXY_IP = "149.28.219.182";
-    //    String PPAASS_PROXY_IP = "10.175.4.220";
+//        String PPAASS_PROXY_IP = "10.175.4.220";
 //    short PPAASS_PROXY_PORT = 9097;
     short PPAASS_PROXY_PORT = 80;
     String PPAASS_USER_TOKEN = "user1";

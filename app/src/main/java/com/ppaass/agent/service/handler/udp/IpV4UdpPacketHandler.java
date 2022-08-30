@@ -102,8 +102,14 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
                             ipV4Header);
             return;
         }
-        int dnsQueryId = dnsQuery.id();
         DefaultDnsQuestion dnsQuestion = dnsQuery.recordAt(DnsSection.QUESTION);
+        if (dnsQuestion == null) {
+            Log.e(IpV4UdpPacketHandler.class.getName(),
+                    "---->>>> Ignore udp packet because of no dns question: " + udpPacket + ", ip header: " +
+                            ipV4Header);
+            return;
+        }
+        int dnsQueryId = dnsQuery.id();
         String dnsQueryName = dnsQuestion.name();
         DnsEntry cachedDnsEntry = DnsRepository.INSTANCE.getAddress(dnsQueryName);
         if (cachedDnsEntry != null) {

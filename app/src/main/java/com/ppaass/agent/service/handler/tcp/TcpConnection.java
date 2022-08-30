@@ -60,7 +60,7 @@ public class TcpConnection implements Runnable {
     private final AtomicLong vpnInitialSequenceNumber;
     private final VpnService vpnService;
     private final Bootstrap remoteBootstrap;
-    private final Promise<Channel> proxyChannelPromise;
+    private final Promise<Channel> proxyChannelConnectedPromise;
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, ITcpIpPacketWriter tcpIpPacketWriter,
                          VpnService vpnService) {
@@ -77,7 +77,7 @@ public class TcpConnection implements Runnable {
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.vpnService = vpnService;
         this.remoteBootstrap = this.createBootstrap();
-        this.proxyChannelPromise = new DefaultPromise<>(this.remoteBootstrap.config().group().next());
+        this.proxyChannelConnectedPromise = new DefaultPromise<>(this.remoteBootstrap.config().group().next());
     }
 
     public void run() {
@@ -331,7 +331,7 @@ public class TcpConnection implements Runnable {
         }
         //Connect to Ppaass Proxy start
         try {
-            this.proxyChannel = this.proxyChannelPromise.get(20, TimeUnit.SECONDS);
+            this.proxyChannel = this.proxyChannelConnectedPromise.get(20, TimeUnit.SECONDS);
         } catch (Exception e) {
             tcpIpPacketWriter.writeRstToDevice(this,
                     deviceInboundTcpHeader.getAcknowledgementNumber(),
@@ -408,16 +408,14 @@ public class TcpConnection implements Runnable {
 
     private Bootstrap createBootstrap() {
         Bootstrap result = new Bootstrap();
-        result.group(new NioEventLoopGroup(2));
+        result.group(new NioEventLoopGroup(1));
         result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
         result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
-        result.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
         result.option(ChannelOption.SO_KEEPALIVE, true);
         result.option(ChannelOption.AUTO_READ, true);
         result.option(ChannelOption.AUTO_CLOSE, false);
         result.option(ChannelOption.TCP_NODELAY, true);
         result.option(ChannelOption.SO_REUSEADDR, true);
-        result.option(ChannelOption.TCP_FASTOPEN, Integer.MAX_VALUE);
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         result.attr(tcpConnectionKey, this);
         result.handler(new ChannelInitializer<NioSocketChannel>() {
@@ -425,7 +423,7 @@ public class TcpConnection implements Runnable {
             protected void initChannel(@NonNull NioSocketChannel ch) {
                 ch.pipeline().addLast(new PpaassMessageDecoder());
                 ch.pipeline().addLast(new TcpConnectionProxyMessageHandler(TcpConnection.this.tcpIpPacketWriter,
-                        TcpConnection.this.proxyChannelPromise));
+                        TcpConnection.this.proxyChannelConnectedPromise));
                 ch.pipeline().addLast(new PpaassMessageEncoder(false));
             }
         });
