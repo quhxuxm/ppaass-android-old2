@@ -408,7 +408,7 @@ public class TcpConnection implements Runnable {
 
     private Bootstrap createBootstrap() {
         Bootstrap result = new Bootstrap();
-        result.group(new NioEventLoopGroup(8));
+        result.group(new NioEventLoopGroup(2));
         result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
         result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
         result.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
