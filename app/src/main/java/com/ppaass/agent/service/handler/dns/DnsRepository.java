@@ -1,9 +1,9 @@
 package com.ppaass.agent.service.handler.dns;
 
 import java.net.InetAddress;
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -29,12 +29,12 @@ public class DnsRepository {
         return this.entries.get(domainName);
     }
 
-    public synchronized void saveAddresses(String domainName, Set<InetAddress> addresses) {
-        Set<InetAddress> addressesSet = new HashSet<>();
+    public synchronized void saveAddresses(String domainName, List<InetAddress> addresses) {
+        var addressesList = new ArrayList<InetAddress>();
         DnsEntry entryToInsert = new DnsEntry();
         entryToInsert.setName(domainName);
         entryToInsert.setLastAccessTime(System.currentTimeMillis());
-        entryToInsert.setAddresses(addressesSet);
+        entryToInsert.setAddresses(addressesList);
         DnsEntry result = this.entries.putIfAbsent(domainName, entryToInsert);
         if (result == null) {
             entryToInsert.getAddresses().addAll(addresses);
@@ -44,11 +44,11 @@ public class DnsRepository {
     }
 
     public synchronized void saveAddress(String domainName, InetAddress address) {
-        Set<InetAddress> addressesSet = new HashSet<>();
+        var addressesList = new ArrayList<InetAddress>();
         DnsEntry entryToInsert = new DnsEntry();
         entryToInsert.setName(domainName);
         entryToInsert.setLastAccessTime(System.currentTimeMillis());
-        entryToInsert.setAddresses(addressesSet);
+        entryToInsert.setAddresses(addressesList);
         DnsEntry result = this.entries.putIfAbsent(domainName, entryToInsert);
         if (result == null) {
             entryToInsert.getAddresses().add(address);

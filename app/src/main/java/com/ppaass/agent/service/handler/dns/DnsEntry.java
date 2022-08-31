@@ -1,11 +1,12 @@
 package com.ppaass.agent.service.handler.dns;
 
 import java.net.InetAddress;
+import java.util.List;
 import java.util.Set;
 
 public class DnsEntry {
     private String name;
-    private Set<InetAddress> addresses;
+    private List<InetAddress> addresses;
     private long lastAccessTime;
 
     public String getName() {
@@ -16,11 +17,11 @@ public class DnsEntry {
         this.name = name;
     }
 
-    public Set<InetAddress> getAddresses() {
+    public List<InetAddress> getAddresses() {
         return addresses;
     }
 
-    public void setAddresses(Set<InetAddress> addresses) {
+    public void setAddresses(List<InetAddress> addresses) {
         this.addresses = addresses;
     }
 
