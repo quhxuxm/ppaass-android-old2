@@ -6,6 +6,7 @@ import com.ppaass.agent.protocol.general.ip.*;
 import com.ppaass.agent.protocol.general.tcp.*;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
+import io.netty.buffer.Unpooled;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -41,13 +42,13 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
         this.connectionRepository = new ConcurrentHashMap<>();
-        this.connectionThreadPool = Executors.newWorkStealingPool(512);
+        this.connectionThreadPool = Executors.newWorkStealingPool(IVpnConst.TCP_CONNECTION_NUMBER);
         this.ipIdentifier = new AtomicInteger(RANDOM.nextInt(Short.MAX_VALUE * 2 + 2));
         Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
             this.connectionRepository.forEach((tcpConnectionRepositoryKey, tcpConnectionWrapper) -> {
                 TcpConnection tcpConnection = tcpConnectionWrapper.connection;
                 long connectionIdleTime = tcpConnection.getLatestActiveTime() - System.currentTimeMillis();
-                if (connectionIdleTime > 1000 * 120) {
+                if (connectionIdleTime > IVpnConst.TCP_CONNECTION_IDLE_TIMEOUT_MS) {
                     this.unregisterConnection(tcpConnectionRepositoryKey);
                 }
             });
@@ -56,7 +57,7 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
 
     private TcpConnectionWrapper prepareTcpConnection(TcpConnectionRepositoryKey repositoryKey, TcpPacket tcpPacket) {
         synchronized (this.connectionRepository) {
-            TcpConnectionWrapper result = this.connectionRepository.get(repositoryKey);
+            var result = this.connectionRepository.get(repositoryKey);
             if (result != null) {
                 return result;
             }

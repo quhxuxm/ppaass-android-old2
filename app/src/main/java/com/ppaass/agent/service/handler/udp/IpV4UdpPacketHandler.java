@@ -9,7 +9,7 @@ import com.ppaass.agent.protocol.general.udp.UdpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacketBuilder;
 import com.ppaass.agent.protocol.message.*;
 import com.ppaass.agent.service.IVpnConst;
-import com.ppaass.agent.service.PpaassVpnTcpChannelFactory;
+import com.ppaass.agent.service.PpaassVpnNettyTcpChannelFactory;
 import com.ppaass.agent.service.handler.IUdpIpPacketWriter;
 import com.ppaass.agent.service.handler.PpaassMessageDecoder;
 import com.ppaass.agent.service.handler.PpaassMessageEncoder;
@@ -51,7 +51,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         NioEventLoopGroup proxyEventLoopGroup = new NioEventLoopGroup(2);
         Bootstrap proxyBootstrap = new Bootstrap();
         proxyBootstrap.group(proxyEventLoopGroup);
-        proxyBootstrap.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
+        proxyBootstrap.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
         proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
         proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
         proxyBootstrap.option(ChannelOption.SO_KEEPALIVE, true);

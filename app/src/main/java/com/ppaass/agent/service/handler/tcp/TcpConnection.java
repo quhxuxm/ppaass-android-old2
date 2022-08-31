@@ -3,11 +3,10 @@ package com.ppaass.agent.service.handler.tcp;
 import android.net.VpnService;
 import android.util.Log;
 import androidx.annotation.NonNull;
-import com.ppaass.agent.protocol.general.tcp.TcpHeader;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.message.*;
 import com.ppaass.agent.service.IVpnConst;
-import com.ppaass.agent.service.PpaassVpnTcpChannelFactory;
+import com.ppaass.agent.service.PpaassVpnNettyTcpChannelFactory;
 import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
 import com.ppaass.agent.service.handler.PpaassMessageDecoder;
 import com.ppaass.agent.service.handler.PpaassMessageEncoder;
@@ -42,8 +41,8 @@ public class TcpConnection implements Runnable {
     static {
         // Set the initial sequence number, which will be used across all tcp connection,
         // it is increase for each tcp connection
-        Random random = new Random();
-        int nextRandom = Math.abs(random.nextInt());
+        var random = new Random();
+        var nextRandom = Math.abs(random.nextInt());
         INITIAL_SEQ.set(nextRandom);
     }
 
@@ -59,7 +58,7 @@ public class TcpConnection implements Runnable {
     private final AtomicLong deviceInitialSequenceNumber;
     private final AtomicLong vpnInitialSequenceNumber;
     private final VpnService vpnService;
-    private final Bootstrap remoteBootstrap;
+    private final Bootstrap proxyChannelBootstrap;
     private final Promise<Channel> proxyChannelConnectedPromise;
 
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, ITcpIpPacketWriter tcpIpPacketWriter,
@@ -76,16 +75,16 @@ public class TcpConnection implements Runnable {
                 new PriorityBlockingQueue<>(1024, Comparator.comparingLong(p -> p.getHeader().getSequenceNumber()));
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.vpnService = vpnService;
-        this.remoteBootstrap = this.createBootstrap();
-        this.proxyChannelConnectedPromise = new DefaultPromise<>(this.remoteBootstrap.config().group().next());
+        this.proxyChannelBootstrap = this.createBootstrap();
+        this.proxyChannelConnectedPromise = new DefaultPromise<>(this.proxyChannelBootstrap.config().group().next());
     }
 
     public void run() {
         while (this.status.get() != TcpConnectionStatus.CLOSED) {
             try {
-                TcpPacket deviceInboundTcpPacket = this.deviceInboundQueue.take();
+                var deviceInboundTcpPacket = this.deviceInboundQueue.take();
                 this.setLatestActiveTime();
-                TcpHeader deviceInboundTcpHeader = deviceInboundTcpPacket.getHeader();
+                var deviceInboundTcpHeader = deviceInboundTcpPacket.getHeader();
                 int deviceInputDataLength = deviceInboundTcpPacket.getData().length;
                 Log.v(TcpConnection.class.getName(),
                         ">>>>>>>> Take tcp packet from device inbound queue, current connection: " + this +
@@ -210,8 +209,8 @@ public class TcpConnection implements Runnable {
         //Device maybe carry data together with Fin(ACK)
         this.relayDeviceData(deviceInboundTcpPacket);
         this.proxyChannel.close().addListener(future -> {
-            long ackNumberForCloseWait = TcpConnection.this.getCurrentAcknowledgementNumber().get();
-            TcpConnection.this.remoteBootstrap.config().group().shutdownGracefully();
+            var ackNumberForCloseWait = TcpConnection.this.getCurrentAcknowledgementNumber().get();
+            TcpConnection.this.proxyChannelBootstrap.config().group().shutdownGracefully();
             TcpConnection.this.getStatus().set(TcpConnectionStatus.LAST_ACK);
             this.tcpIpPacketWriter.writeFinAckToDevice(null, TcpConnection.this,
                     TcpConnection.this.getCurrentSequenceNumber().get(),
@@ -224,7 +223,7 @@ public class TcpConnection implements Runnable {
     }
 
     private void relayDeviceData(TcpPacket deviceInboundTcpPacket) {
-        int dataLength = deviceInboundTcpPacket.getData().length;
+        var dataLength = deviceInboundTcpPacket.getData().length;
         if (dataLength == 0) {
 //            TcpConnection.this.currentAcknowledgementNumber.getAndIncrement();
 //            TcpConnection.this.tcpIpPacketWriter.writeAckToDevice(null, TcpConnection.this,
@@ -238,20 +237,20 @@ public class TcpConnection implements Runnable {
         Log.d(TcpConnection.class.getName(),
                 ">>>>>>>> Begin to relay device inbound data to proxy, current connection: " +
                         this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
-        Message messageRelayToProxy = new Message();
+        var messageRelayToProxy = new Message();
         messageRelayToProxy.setId(UUIDUtil.INSTANCE.generateUuid());
         messageRelayToProxy.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
         messageRelayToProxy.setPayloadEncryptionType(PayloadEncryptionType.Aes);
         messageRelayToProxy.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
-        AgentMessagePayload agentMessagePayload = new AgentMessagePayload();
+        var agentMessagePayload = new AgentMessagePayload();
         agentMessagePayload.setData(deviceInboundTcpPacket.getData());
         agentMessagePayload.setPayloadType(AgentMessagePayloadType.TcpData);
-        NetAddress sourceAddress = new NetAddress();
+        var sourceAddress = new NetAddress();
         sourceAddress.setHost(this.repositoryKey.getSourceAddress());
         sourceAddress.setPort((short) this.repositoryKey.getSourcePort());
         sourceAddress.setType(NetAddressType.IpV4);
         agentMessagePayload.setSourceAddress(sourceAddress);
-        NetAddress targetAddress = new NetAddress();
+        var targetAddress = new NetAddress();
         targetAddress.setHost(this.repositoryKey.getDestinationAddress());
         targetAddress.setPort((short) this.repositoryKey.getDestinationPort());
         targetAddress.setType(NetAddressType.IpV4);
@@ -290,7 +289,7 @@ public class TcpConnection implements Runnable {
         Log.d(TcpConnection.class.getName(),
                 ">>>>>>>> Receive ACK and begin to switch connection to ESTABLISHED, current connection: " + this +
                         "; device inbound tcp packet: " + deviceInboundTcpPacket);
-        TcpHeader deviceInboundTcpHeader = deviceInboundTcpPacket.getHeader();
+        var deviceInboundTcpHeader = deviceInboundTcpPacket.getHeader();
         // Receive ack of previous sync-ack.
         if (this.currentSequenceNumber.get() + 1 !=
                 deviceInboundTcpHeader.getAcknowledgementNumber()) {
@@ -379,7 +378,7 @@ public class TcpConnection implements Runnable {
                             "; device inbound tcp packet: " + deviceInboundPacket);
             return;
         }
-        TcpHeader deviceInboundTcpHeader = deviceInboundPacket.getHeader();
+        var deviceInboundTcpHeader = deviceInboundPacket.getHeader();
         //Initialize ack number and seq number
         this.deviceInitialSequenceNumber.set(deviceInboundTcpHeader.getSequenceNumber());
         this.currentAcknowledgementNumber.set(deviceInboundTcpHeader.getSequenceNumber());
@@ -407,9 +406,9 @@ public class TcpConnection implements Runnable {
     }
 
     private Bootstrap createBootstrap() {
-        Bootstrap result = new Bootstrap();
+        var result = new Bootstrap();
         result.group(new NioEventLoopGroup(1));
-        result.channelFactory(new PpaassVpnTcpChannelFactory(this.vpnService));
+        result.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
         result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
         result.option(ChannelOption.SO_KEEPALIVE, true);
         result.option(ChannelOption.AUTO_READ, true);
@@ -442,16 +441,16 @@ public class TcpConnection implements Runnable {
             Log.v(TcpConnection.class.getName(), "Fail to close proxy channel because of exception.", e);
         }
         try {
-            this.remoteBootstrap.config().group().shutdownGracefully();
+            this.proxyChannelBootstrap.config().group().shutdownGracefully();
         } catch (Exception e) {
             Log.v(TcpConnection.class.getName(), "Fail to shutdown remote bootstrap because of exception.", e);
         }
     }
 
     private void doConnectToProxy() throws Exception {
-        InetSocketAddress proxyAddress =
+        var proxyAddress =
                 new InetSocketAddress(InetAddress.getByName(IVpnConst.PPAASS_PROXY_IP), IVpnConst.PPAASS_PROXY_PORT);
-        this.remoteBootstrap.connect(proxyAddress);
+        this.proxyChannelBootstrap.connect(proxyAddress);
     }
 
     /**

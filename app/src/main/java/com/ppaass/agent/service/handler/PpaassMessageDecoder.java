@@ -8,7 +8,6 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import net.jpountz.lz4.LZ4Factory;
-import net.jpountz.lz4.LZ4SafeDecompressor;
 
 import java.util.List;
 
@@ -34,7 +33,7 @@ public class PpaassMessageDecoder extends ByteToMessageDecoder {
             }
             byte[] flagBytes = new byte[IVpnConst.PPAASS_PROTOCOL_FLAG.length()];
             in.readBytes(flagBytes);
-            String flag = new String(flagBytes);
+            var flag = new String(flagBytes);
             if (!IVpnConst.PPAASS_PROTOCOL_FLAG.equals(flag)) {
                 Log.e(PpaassMessageDecoder.class.getName(), "Receive invalid ppaass protocol flag: " + flag);
                 throw new UnsupportedOperationException("Receive invalid ppaass protocol flag: " + flag);
@@ -48,17 +47,17 @@ public class PpaassMessageDecoder extends ByteToMessageDecoder {
         if (in.readableBytes() < this.bodyLength) {
             return;
         }
-        ByteBuf bodyBuf = Unpooled.buffer(this.bodyLength);
+        var bodyBuf = Unpooled.buffer(this.bodyLength);
         in.readBytes(bodyBuf);
         if (this.compressed) {
-            LZ4SafeDecompressor lz4Decompressor = LZ4Factory.fastestInstance().safeDecompressor();
-            byte[] compressedBodyBytes = new byte[bodyLength];
+            var lz4Decompressor = LZ4Factory.fastestInstance().safeDecompressor();
+            var compressedBodyBytes = new byte[bodyLength];
             bodyBuf.readBytes(compressedBodyBytes);
-            byte[] decompressBodyBytes =
+            var decompressBodyBytes =
                     lz4Decompressor.decompress(compressedBodyBytes, 0, bodyLength, bodyLength);
             bodyBuf = Unpooled.wrappedBuffer(decompressBodyBytes);
         }
-        Message result = PpaassMessageUtil.INSTANCE.parseMessageBytes(bodyBuf);
+        var result = PpaassMessageUtil.INSTANCE.parseMessageBytes(bodyBuf);
         this.readHeader = true;
         this.compressed = false;
         this.bodyLength = 0;

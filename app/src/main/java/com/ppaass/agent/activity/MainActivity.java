@@ -4,27 +4,22 @@ import android.content.Intent;
 import android.net.VpnService;
 import android.os.Bundle;
 import android.util.Log;
-import android.widget.Button;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import com.ppaass.agent.R;
 import com.ppaass.agent.service.PpaassVpnService;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 public class MainActivity extends AppCompatActivity {
     private static final int VPN_SERVICE_REQUEST_CODE = 1;
-    private static final ExecutorService testThreadPool = Executors.newFixedThreadPool(32);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        Button startVpnButton = this.findViewById(R.id.startButton);
+        var startVpnButton = this.findViewById(R.id.startButton);
         startVpnButton.setOnClickListener(view -> {
             Log.d(MainActivity.class.getName(), "Click start button, going to start VPN service");
-            Intent prepareVpnIntent = VpnService.prepare(getApplicationContext());
+            var prepareVpnIntent = VpnService.prepare(getApplicationContext());
             if (prepareVpnIntent != null) {
                 startActivityForResult(prepareVpnIntent, VPN_SERVICE_REQUEST_CODE);
                 Log.d(MainActivity.class.getName(), "VPN service instance(new) prepared ...");
@@ -33,9 +28,9 @@ public class MainActivity extends AppCompatActivity {
                 onActivityResult(VPN_SERVICE_REQUEST_CODE, RESULT_OK, null);
             }
         });
-        Button stopVpnButton = this.findViewById(R.id.stopButton);
+        var stopVpnButton = this.findViewById(R.id.stopButton);
         stopVpnButton.setOnClickListener(view -> {
-            Intent stopVpnServiceIntent = new Intent(MainActivity.this, PpaassVpnService.class);
+            var stopVpnServiceIntent = new Intent(MainActivity.this, PpaassVpnService.class);
             stopService(stopVpnServiceIntent);
             Log.d(MainActivity.class.getName(), "Click stop button, going to stop VPN service");
         });

@@ -47,7 +47,7 @@ public class PpaassVpnService extends VpnService {
         CryptographyUtil.INSTANCE.init(proxyPublicKeyBytes, agentPrivateKeyBytes);
         this.id = UUID.randomUUID().toString().replace("-", "");
         Log.i(PpaassVpnService.class.getName(), "onCreate: " + this.id);
-        Builder vpnBuilder = new Builder();
+        var vpnBuilder = new Builder();
         vpnBuilder.addAddress(VPN_ADDRESS, 32).addRoute(VPN_ROUTE, 0)
                 .addDnsServer(IVpnConst.DNS)
                 .setMtu(IVpnConst.MTU)
@@ -71,7 +71,7 @@ public class PpaassVpnService extends VpnService {
             return Service.START_STICKY;
         }
         try {
-            IpPacketHandler ipPacketHandler =
+            var ipPacketHandler =
                     new IpPacketHandler(this.rawDeviceInputStream, this.rawDeviceOutputStream,
                             IVpnConst.READ_BUFFER_SIZE, this);
             ipPacketHandler.start();

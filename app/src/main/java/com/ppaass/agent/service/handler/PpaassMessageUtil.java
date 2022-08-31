@@ -14,37 +14,37 @@ public class PpaassMessageUtil {
     }
 
     public Message parseMessageBytes(ByteBuf messageBytes) {
-        Message result = new Message();
-        int idLength = messageBytes.readShort() & 0xFFFF;
-        byte[] idBytes = new byte[idLength];
+        var result = new Message();
+        var idLength = messageBytes.readShort() & 0xFFFF;
+        var idBytes = new byte[idLength];
         messageBytes.readBytes(idBytes);
-        String id = new String(idBytes);
+        var id = new String(idBytes);
         result.setId(id);
-        int refIdLength = messageBytes.readShort() & 0xFFFF;
-        byte[] refIdBytes = new byte[refIdLength];
+        var refIdLength = messageBytes.readShort() & 0xFFFF;
+        var refIdBytes = new byte[refIdLength];
         messageBytes.readBytes(refIdBytes);
-        String refId = new String(refIdBytes);
+        var refId = new String(refIdBytes);
         result.setRefId(refId);
-        int connectionIdLength = messageBytes.readShort() & 0xFFFF;
-        byte[] connectionIdBytes = new byte[connectionIdLength];
+        var connectionIdLength = messageBytes.readShort() & 0xFFFF;
+        var connectionIdBytes = new byte[connectionIdLength];
         messageBytes.readBytes(connectionIdBytes);
-        String connectionId = new String(connectionIdBytes);
+        var connectionId = new String(connectionIdBytes);
         result.setConnectionId(connectionId);
-        int userTokenLength = messageBytes.readShort() & 0xFFFF;
-        byte[] userTokenBytes = new byte[userTokenLength];
+        var userTokenLength = messageBytes.readShort() & 0xFFFF;
+        var userTokenBytes = new byte[userTokenLength];
         messageBytes.readBytes(userTokenBytes);
-        String userToken = new String(userTokenBytes);
+        var userToken = new String(userTokenBytes);
         result.setUserToken(userToken);
-        byte payloadEncryptionTypeValue = messageBytes.readByte();
-        PayloadEncryptionType payloadEncryptionType = PayloadEncryptionType.from(payloadEncryptionTypeValue);
-        int payloadEncryptionTokenLength = messageBytes.readShort() & 0xFFFF;
-        byte[] payloadEncryptionToken = new byte[payloadEncryptionTokenLength];
+        var payloadEncryptionTypeValue = messageBytes.readByte();
+        var payloadEncryptionType = PayloadEncryptionType.from(payloadEncryptionTypeValue);
+        var payloadEncryptionTokenLength = messageBytes.readShort() & 0xFFFF;
+        var payloadEncryptionToken = new byte[payloadEncryptionTokenLength];
         messageBytes.readBytes(payloadEncryptionToken);
-        long messagePayloadLength = messageBytes.readLong();
+        var messagePayloadLength = messageBytes.readLong();
         switch (payloadEncryptionType) {
             case Plain: {
                 result.setPayloadEncryptionType(PayloadEncryptionType.Plain);
-                byte[] payloadBytes = new byte[(int) messagePayloadLength];
+                var payloadBytes = new byte[(int) messagePayloadLength];
                 messageBytes.readBytes(payloadBytes);
                 result.setPayload(payloadBytes);
                 return result;
@@ -55,7 +55,7 @@ public class PpaassMessageUtil {
                 payloadEncryptionToken = CryptographyUtil.INSTANCE.rsaDecrypt(payloadEncryptionToken);
                 result.setPayloadEncryptionToken(payloadEncryptionToken);
                 //TODO Decrypt payload with Aes
-                byte[] payloadBytes = new byte[(int) messagePayloadLength];
+                var payloadBytes = new byte[(int) messagePayloadLength];
                 messageBytes.readBytes(payloadBytes);
                 payloadBytes = CryptographyUtil.INSTANCE.aesDecrypt(payloadEncryptionToken, payloadBytes);
                 Log.d(PpaassMessageUtil.class.getName(),
@@ -69,22 +69,22 @@ public class PpaassMessageUtil {
     }
 
     public ProxyMessagePayload parseProxyMessagePayloadBytes(byte[] payloadBytes) {
-        ProxyMessagePayload result = new ProxyMessagePayload();
-        ByteBuf payloadByteBuf = Unpooled.wrappedBuffer(payloadBytes);
-        int payloadType = payloadByteBuf.readByte();
+        var result = new ProxyMessagePayload();
+        var payloadByteBuf = Unpooled.wrappedBuffer(payloadBytes);
+        var payloadType = payloadByteBuf.readByte();
         result.setPayloadType(ProxyMessagePayloadType.from((byte) payloadType));
-        boolean sourceAddressExist = payloadByteBuf.readBoolean();
+        var sourceAddressExist = payloadByteBuf.readBoolean();
         if (sourceAddressExist) {
-            NetAddress sourceAddress = readNetAddress(payloadByteBuf);
+            var sourceAddress = readNetAddress(payloadByteBuf);
             result.setSourceAddress(sourceAddress);
         }
-        boolean targetAddressExist = payloadByteBuf.readBoolean();
+        var targetAddressExist = payloadByteBuf.readBoolean();
         if (targetAddressExist) {
-            NetAddress targetAddress = readNetAddress(payloadByteBuf);
+            var targetAddress = readNetAddress(payloadByteBuf);
             result.setTargetAddress(targetAddress);
         }
-        long dataLength = payloadByteBuf.readLong();
-        byte[] data = new byte[(int) dataLength];
+        var dataLength = payloadByteBuf.readLong();
+        var data = new byte[(int) dataLength];
         payloadByteBuf.readBytes(data);
         result.setData(data);
         return result;

@@ -8,21 +8,21 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import java.io.IOException;
 import java.nio.channels.SocketChannel;
 
-public class PpaassVpnTcpChannelFactory implements ChannelFactory<NioSocketChannel> {
+public class PpaassVpnNettyTcpChannelFactory implements ChannelFactory<NioSocketChannel> {
     private final VpnService vpnService;
 
-    public PpaassVpnTcpChannelFactory(VpnService vpnService) {
+    public PpaassVpnNettyTcpChannelFactory(VpnService vpnService) {
         this.vpnService = vpnService;
     }
 
     @Override
     public NioSocketChannel newChannel() {
         try {
-            SocketChannel javaSocketChannel = SocketChannel.open();
+            var javaSocketChannel = SocketChannel.open();
             this.vpnService.protect(javaSocketChannel.socket());
             return new NioSocketChannel(javaSocketChannel);
         } catch (IOException e) {
-            Log.e(PpaassVpnTcpChannelFactory.class.getName(), "Fail to create tcp channel because of exception.", e);
+            Log.e(PpaassVpnNettyTcpChannelFactory.class.getName(), "Fail to create tcp channel because of exception.", e);
             throw new IllegalStateException("Fail to create tcp channel because of exception.", e);
         }
     }
