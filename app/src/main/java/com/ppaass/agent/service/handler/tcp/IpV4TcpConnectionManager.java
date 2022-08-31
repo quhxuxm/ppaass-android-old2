@@ -41,7 +41,7 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
         this.connectionRepository = new ConcurrentHashMap<>();
-        this.connectionThreadPool = Executors.newWorkStealingPool(256);
+        this.connectionThreadPool = Executors.newWorkStealingPool(512);
         this.ipIdentifier = new AtomicInteger(RANDOM.nextInt(Short.MAX_VALUE * 2 + 2));
         Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
             this.connectionRepository.forEach((tcpConnectionRepositoryKey, tcpConnectionWrapper) -> {
