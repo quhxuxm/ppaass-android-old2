@@ -7,7 +7,7 @@
         android:layout_height="match_parent"
         tools:context=".activity.MainActivity">
     <Button
-            android:text="Start"
+            android:text="@string/start_button_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:id="@+id/startButton"
@@ -18,7 +18,7 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintVertical_bias="0.499"/>
     <Button
-            android:text="Stop"
+            android:text="@string/stop_button_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:id="@+id/stopButton"
@@ -28,26 +28,4 @@
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintVertical_bias="0.571"/>
-    <Button
-            android:text="Test"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:id="@+id/testButton"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintHorizontal_bias="0.501"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintVertical_bias="0.641"/>
-    <Button
-            android:text="Call Native"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:id="@+id/callNative"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintHorizontal_bias="0.498"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintVertical_bias="0.711"/>
 </androidx.constraintlayout.widget.ConstraintLayout>

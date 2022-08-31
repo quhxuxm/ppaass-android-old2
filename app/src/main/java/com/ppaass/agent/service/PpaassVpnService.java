@@ -49,7 +49,6 @@ public class PpaassVpnService extends VpnService {
         Log.i(PpaassVpnService.class.getName(), "onCreate: " + this.id);
         Builder vpnBuilder = new Builder();
         vpnBuilder.addAddress(VPN_ADDRESS, 32).addRoute(VPN_ROUTE, 0)
-//                .addDnsServer(dnsAddress)
                 .addDnsServer(IVpnConst.DNS)
                 .setMtu(IVpnConst.MTU)
                 .setBlocking(true);
@@ -68,31 +67,39 @@ public class PpaassVpnService extends VpnService {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (this.running) {
-            Log.i(PpaassVpnService.class.getName(), "onStartCommand(start already): " + this.id);
+            Log.i(PpaassVpnService.class.getName(), "Receive start command when service is running: " + this.id);
             return Service.START_STICKY;
         }
-        this.running = true;
         try {
             IpPacketHandler ipPacketHandler =
                     new IpPacketHandler(this.rawDeviceInputStream, this.rawDeviceOutputStream,
                             IVpnConst.READ_BUFFER_SIZE, this);
             ipPacketHandler.start();
         } catch (Exception e) {
-            Log.e(PpaassVpnService.class.getName(), "Fail onStartCommand: " + this.id, e);
+            this.running = false;
+            Log.e(PpaassVpnService.class.getName(), "Fail to start service: " + this.id, e);
             return Service.START_STICKY;
         }
-        Log.i(PpaassVpnService.class.getName(), "onStartCommand: " + this.id);
+        this.running = true;
+        Log.i(PpaassVpnService.class.getName(), "Success to start service: " + this.id);
         return Service.START_STICKY;
     }
 
     @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        Log.i(PpaassVpnService.class.getName(), "Success to stop service(onTaskRemoved): " + this.id);
+    }
+
+    @Override
     public void onDestroy() {
-        super.onDestroy();
         this.running = false;
         try {
             this.vpnInterface.close();
+            Log.i(PpaassVpnService.class.getName(), "Success to stop service: " + this.id);
         } catch (IOException e) {
             Log.e(PpaassVpnService.class.getName(), "Fail to close vpn interface: " + this.id, e);
         }
+        super.onDestroy();
     }
 }

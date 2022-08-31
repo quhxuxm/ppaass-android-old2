@@ -434,8 +434,18 @@ public class TcpConnection implements Runnable {
         return INITIAL_SEQ.getAndIncrement();
     }
 
-    public void clear() {
+    public void clearResource() {
         this.deviceInboundQueue.clear();
+        try {
+            this.proxyChannel.close();
+        } catch (Exception e) {
+            Log.v(TcpConnection.class.getName(), "Fail to close proxy channel because of exception.", e);
+        }
+        try {
+            this.remoteBootstrap.config().group().shutdownGracefully();
+        } catch (Exception e) {
+            Log.v(TcpConnection.class.getName(), "Fail to shutdown remote bootstrap because of exception.", e);
+        }
     }
 
     private void doConnectToProxy() throws Exception {

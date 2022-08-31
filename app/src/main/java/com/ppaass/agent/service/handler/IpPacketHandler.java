@@ -10,7 +10,7 @@ import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
 import com.ppaass.agent.service.PpaassVpnService;
 import com.ppaass.agent.service.handler.icmp.IpV4IcmpPacketHandler;
-import com.ppaass.agent.service.handler.tcp.IpV4TcpConnectionHandler;
+import com.ppaass.agent.service.handler.tcp.IpV4TcpConnectionManager;
 import com.ppaass.agent.service.handler.udp.IpV4UdpPacketHandler;
 
 import java.io.FileInputStream;
@@ -22,7 +22,7 @@ import java.util.concurrent.Executors;
 public class IpPacketHandler {
     private final FileChannel rawDeviceInputChannel;
     private final int readBufferSize;
-    private final IpV4TcpConnectionHandler ipV4TcpConnectionHandler;
+    private final IpV4TcpConnectionManager ipV4TcpConnectionManager;
     private final IpV4UdpPacketHandler ipV4UdpPacketHandler;
     private final IpV4IcmpPacketHandler ipV4IcmpPacketHandler;
     private final PpaassVpnService vpnService;
@@ -33,7 +33,7 @@ public class IpPacketHandler {
         this.rawDeviceInputChannel = rawDeviceInputStream.getChannel();
         this.readBufferSize = readBufferSize;
         this.vpnService = vpnService;
-        this.ipV4TcpConnectionHandler = new IpV4TcpConnectionHandler(rawDeviceOutputStream, vpnService);
+        this.ipV4TcpConnectionManager = new IpV4TcpConnectionManager(rawDeviceOutputStream, vpnService);
         this.ipV4UdpPacketHandler = new IpV4UdpPacketHandler(rawDeviceOutputStream, vpnService);
         this.ipV4IcmpPacketHandler = new IpV4IcmpPacketHandler();
     }
@@ -64,7 +64,7 @@ public class IpPacketHandler {
                 switch (ipV4Header.getProtocol()) {
                     case TCP: {
                         TcpPacket tcpPacket = (TcpPacket) element.getData();
-                        this.ipV4TcpConnectionHandler.handle(tcpPacket, ipV4Header);
+                        this.ipV4TcpConnectionManager.handle(tcpPacket, ipV4Header);
                         break;
                     }
                     case UDP: {

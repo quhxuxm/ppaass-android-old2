@@ -15,7 +15,7 @@ import java.util.Random;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnectionManager {
+public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnectionManager {
     private static final Random RANDOM = new Random();
     private static final AtomicInteger TIMESTAMP = new AtomicInteger();
     private final FileOutputStream rawDeviceOutputStream;
@@ -37,7 +37,7 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
         }
     }
 
-    public IpV4TcpConnectionHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService) {
+    public IpV4TcpConnectionManager(FileOutputStream rawDeviceOutputStream, VpnService vpnService) {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
         this.connectionRepository = new ConcurrentHashMap<>();
@@ -66,7 +66,7 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
                     this.vpnService);
             this.connectionRepository.put(repositoryKey, result);
             result.connectionTask = this.connectionThreadPool.submit(result.connection);
-            Log.d(IpV4TcpConnectionHandler.class.getName(),
+            Log.d(IpV4TcpConnectionManager.class.getName(),
                     ">>>>>>>> Create tcp connection: " + result + ", tcp packet: " + tcpPacket +
                             ", connection repository size: " + this.connectionRepository.size() +
                             ", connection thread pool: " + this.connectionThreadPool);
@@ -85,7 +85,7 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
     public void handle(TcpPacket tcpPacket, IpV4Header ipV4Header) throws Exception {
         int generatedChecksumToVerify = this.generateChecksumToVerify(tcpPacket, ipV4Header);
         if (generatedChecksumToVerify != tcpPacket.getHeader().getChecksum()) {
-            Log.e(IpV4TcpConnectionHandler.class.getName(),
+            Log.e(IpV4TcpConnectionManager.class.getName(),
                     ">>>>>>>> Fail to verify checksum for tcp packet: " + tcpPacket +
                             ", ip header: " +
                             ipV4Header + ", generated check sum: " + generatedChecksumToVerify +
@@ -102,7 +102,7 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
         TcpConnectionWrapper tcpConnectionWrapper = this.prepareTcpConnection(tcpConnectionRepositoryKey, tcpPacket);
         TcpConnection tcpConnection = tcpConnectionWrapper.connection;
         tcpConnection.onDeviceInbound(tcpPacket);
-        Log.v(IpV4TcpConnectionHandler.class.getName(),
+        Log.v(IpV4TcpConnectionManager.class.getName(),
                 ">>>>>>>> Do inbound for tcp connection: " + tcpConnection + ", incoming tcp packet: " + tcpPacket +
                         ", ip header: " +
                         ipV4Header + ", tcp connection repository size: " +
@@ -117,7 +117,7 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
                 return;
             }
             tcpConnectionWrapper.connection.getStatus().set(TcpConnectionStatus.CLOSED);
-            tcpConnectionWrapper.connection.clear();
+            tcpConnectionWrapper.connection.clearResource();
             tcpConnectionWrapper.connectionTask.cancel(true);
         }
     }
@@ -260,7 +260,7 @@ public class IpV4TcpConnectionHandler implements ITcpIpPacketWriter, ITcpConnect
         ipPacketBuilder.data(tcpPacket);
         IpPacket ipPacket = ipPacketBuilder.build();
         ByteBuffer ipPacketBytes = IpPacketWriter.INSTANCE.write(ipPacket);
-        Log.v(IpV4TcpConnectionHandler.class.getName(),
+        Log.v(IpV4TcpConnectionManager.class.getName(),
                 "<<<<<<<< Write ip packet to device, current connection:  " + tcpConnection +
                         ", output ip packet: " + ipPacket);
         byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
