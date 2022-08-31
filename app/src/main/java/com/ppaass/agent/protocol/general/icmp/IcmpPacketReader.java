@@ -1,6 +1,7 @@
 package com.ppaass.agent.protocol.general.icmp;
 
-import java.nio.ByteBuffer;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 
 public class IcmpPacketReader {
     public static final IcmpPacketReader INSTANCE = new IcmpPacketReader();
@@ -9,26 +10,26 @@ public class IcmpPacketReader {
     }
 
     public IcmpPacket<?> parse(byte[] input) {
-        ByteBuffer byteBuffer = ByteBuffer.wrap(input);
-        byte type = byteBuffer.get();
+        ByteBuf byteBuffer = Unpooled.wrappedBuffer(input);
+        byte type = byteBuffer.readByte();
         IcmpQueryType queryType = IcmpQueryType.parse(type);
         if (queryType != null) {
             IcmpQueryPacket icmpPacket = new IcmpQueryPacket(queryType);
-            icmpPacket.setCode(byteBuffer.get());
-            icmpPacket.setChecksum(byteBuffer.getShort());
-            icmpPacket.setUnused(byteBuffer.getInt());
-            byte[] data = new byte[byteBuffer.remaining()];
-            byteBuffer.get(data);
+            icmpPacket.setCode(byteBuffer.readByte());
+            icmpPacket.setChecksum(byteBuffer.readShort());
+            icmpPacket.setUnused(byteBuffer.readInt());
+            byte[] data = new byte[byteBuffer.readableBytes()];
+            byteBuffer.readBytes(data);
             icmpPacket.setData(data);
             return icmpPacket;
         }
         IcmpErrorType errorType = IcmpErrorType.parse(type);
         IcmpErrorPacket icmpPacket = new IcmpErrorPacket(errorType);
-        icmpPacket.setCode(byteBuffer.get());
-        icmpPacket.setChecksum(byteBuffer.getShort());
-        icmpPacket.setUnused(byteBuffer.getInt());
-        byte[] data = new byte[byteBuffer.remaining()];
-        byteBuffer.get(data);
+        icmpPacket.setCode(byteBuffer.readByte());
+        icmpPacket.setChecksum(byteBuffer.readShort());
+        icmpPacket.setUnused(byteBuffer.readInt());
+        byte[] data = new byte[byteBuffer.readableBytes()];
+        byteBuffer.readBytes(data);
         icmpPacket.setData(data);
         return icmpPacket;
     }

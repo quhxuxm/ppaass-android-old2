@@ -4,6 +4,8 @@ import com.ppaass.agent.protocol.general.IProtocolConst;
 import com.ppaass.agent.protocol.general.icmp.IcmpPacketReader;
 import com.ppaass.agent.protocol.general.tcp.TcpPacketReader;
 import com.ppaass.agent.protocol.general.udp.UdpPacketReader;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 
 import java.nio.ByteBuffer;
 
@@ -14,8 +16,8 @@ public class IpPacketReader {
     }
 
     public IpPacket parse(byte[] input) {
-        ByteBuffer byteBuffer = ByteBuffer.wrap(input);
-        byte versionAndHeaderLength = byteBuffer.get();
+        ByteBuf byteBuffer = Unpooled.wrappedBuffer(input);
+        byte versionAndHeaderLength = byteBuffer.readByte();
         int version = versionAndHeaderLength >> 4;
         IpHeaderVersion ipHeaderVersion = IpHeaderVersion.parse((byte) version);
         if (IpHeaderVersion.V4 != ipHeaderVersion) {
@@ -25,7 +27,7 @@ public class IpPacketReader {
         }
         int internalHeaderLength = versionAndHeaderLength & 0xf;
         IpV4HeaderBuilder ipV4HeaderBuilder = new IpV4HeaderBuilder();
-        byte dsAndEcn = byteBuffer.get();
+        byte dsAndEcn = byteBuffer.readByte();
         int ds = dsAndEcn >> 2;
         int ecn = dsAndEcn & 3;
         IpDifferentiatedServices differentiatedServices = new IpDifferentiatedServices(
@@ -40,9 +42,9 @@ public class IpPacketReader {
                 ecn & 1
         );
         ipV4HeaderBuilder.ecn(explicitCongestionNotification);
-        int totalLength = byteBuffer.getShort() & 0xFFFF;
-        ipV4HeaderBuilder.identification(byteBuffer.getShort() & 0xFFFF);
-        int flagsAndOffset = byteBuffer.getShort();
+        int totalLength = byteBuffer.readShort() & 0xFFFF;
+        ipV4HeaderBuilder.identification(byteBuffer.readShort() & 0xFFFF);
+        int flagsAndOffset = byteBuffer.readShort();
         int flagsInBit = flagsAndOffset >> 13;
         IpFlags flags = new IpFlags(
                 (flagsInBit & 2) != 0,
@@ -50,24 +52,24 @@ public class IpPacketReader {
         );
         ipV4HeaderBuilder.flags(flags);
         ipV4HeaderBuilder.fragmentOffset(flagsAndOffset & 0x1FFF);
-        ipV4HeaderBuilder.ttl(byteBuffer.get() & 0xFF);
-        IpDataProtocol protocol = IpDataProtocol.parse(byteBuffer.get() & 0xFF);
+        ipV4HeaderBuilder.ttl(byteBuffer.readByte() & 0xFF);
+        IpDataProtocol protocol = IpDataProtocol.parse(byteBuffer.readByte() & 0xFF);
         if (protocol == null) {
             throw new IllegalStateException("No protocol found in ip packet.");
         }
         ipV4HeaderBuilder.protocol(protocol);
-        ipV4HeaderBuilder.checksum(byteBuffer.getShort() & 0xFFFF);
+        ipV4HeaderBuilder.checksum(byteBuffer.readShort() & 0xFFFF);
         byte[] sourceAddress = new byte[4];
-        byteBuffer.get(sourceAddress);
+        byteBuffer.readBytes(sourceAddress);
         ipV4HeaderBuilder.sourceAddress(sourceAddress);
         byte[] destinationAddress = new byte[4];
-        byteBuffer.get(destinationAddress);
+        byteBuffer.readBytes(destinationAddress);
         ipV4HeaderBuilder.destinationAddress(destinationAddress);
         byte[] optionBytes = new byte[internalHeaderLength * 4 - IProtocolConst.MIN_IP_HEADER_LENGTH];
-        byteBuffer.get(optionBytes);
+        byteBuffer.readBytes(optionBytes);
         ipV4HeaderBuilder.options(optionBytes);
         byte[] dataBytes = new byte[totalLength - internalHeaderLength * 4];
-        byteBuffer.get(dataBytes);
+        byteBuffer.readBytes(dataBytes);
         byteBuffer.clear();
         IpV4Header ipV4Header = ipV4HeaderBuilder.build();
         IpPacketBuilder ipPacketBuilder = new IpPacketBuilder();
