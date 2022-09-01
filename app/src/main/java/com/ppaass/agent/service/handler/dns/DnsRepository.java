@@ -1,5 +1,7 @@
 package com.ppaass.agent.service.handler.dns;
 
+import com.ppaass.agent.service.IVpnConst;
+
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,7 +19,7 @@ public class DnsRepository {
         Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(() -> {
             synchronized (INSTANCE) {
                 entries.forEach((k, v) -> {
-                    if (System.currentTimeMillis() - v.getLastAccessTime() >= 120 * 1000) {
+                    if ((System.currentTimeMillis() - v.getLastAccessTime()) >= IVpnConst.DNS_IDLE_TIMEOUT_MS) {
                         entries.remove(k);
                     }
                 });

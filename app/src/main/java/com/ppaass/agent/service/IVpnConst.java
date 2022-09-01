@@ -3,6 +3,7 @@ package com.ppaass.agent.service;
 public interface IVpnConst {
     int WRITE_BUFFER_SIZE = 65535;
     int TCP_CONNECTION_IDLE_TIMEOUT_MS=120*1000;
+    int DNS_IDLE_TIMEOUT_MS=120*1000;
     int TCP_CONNECTION_NUMBER=256;
     int READ_BUFFER_SIZE = 655350;
     int READ_REMOTE_BUFFER_SIZE = 65535;
