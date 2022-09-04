@@ -55,11 +55,11 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
             NetAddress sourceNetAddress = proxyMessagePayload.getSourceAddress();
             NetAddress targetNetAddress = proxyMessagePayload.getTargetAddress();
             InetSocketAddress sourceAddress =
-                    new InetSocketAddress(InetAddress.getByAddress(sourceNetAddress.getHost()),
-                            sourceNetAddress.getPort());
+                    new InetSocketAddress(InetAddress.getByAddress(sourceNetAddress.getValue().getHost()),
+                            sourceNetAddress.getValue().getPort());
             InetSocketAddress targetAddress =
-                    new InetSocketAddress(InetAddress.getByAddress(targetNetAddress.getHost()),
-                            targetNetAddress.getPort());
+                    new InetSocketAddress(InetAddress.getByAddress(targetNetAddress.getValue().getHost()),
+                            targetNetAddress.getValue().getPort());
             DatagramDnsResponse dnsResponse =
                     new DatagramDnsResponse(sourceAddress, targetAddress, domainResolveResponse.getId());
             DefaultDnsQuestion dnsQuestion = new DefaultDnsQuestion(domainResolveResponse.getName(), DnsRecordType.A);
@@ -77,13 +77,13 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
             short udpIpPacketId = (short) (Math.random() * 10000);
             UdpPacketBuilder remoteToDeviceUdpPacketBuilder = new UdpPacketBuilder();
             remoteToDeviceUdpPacketBuilder.data(dnsResponseUdpPacket.content().array());
-            remoteToDeviceUdpPacketBuilder.destinationPort(sourceNetAddress.getPort());
-            remoteToDeviceUdpPacketBuilder.sourcePort(targetNetAddress.getPort());
+            remoteToDeviceUdpPacketBuilder.destinationPort(sourceNetAddress.getValue().getPort());
+            remoteToDeviceUdpPacketBuilder.sourcePort(targetNetAddress.getValue().getPort());
             UdpPacket remoteToDeviceUdpPacket = remoteToDeviceUdpPacketBuilder.build();
             try {
                 this.ipPacketWriter.writeToDevice(udpIpPacketId, remoteToDeviceUdpPacket,
-                        targetNetAddress.getHost(),
-                        sourceNetAddress.getHost(), 0);
+                        targetNetAddress.getValue().getHost(),
+                        sourceNetAddress.getValue().getHost(), 0);
             } catch (IOException e) {
                 Log.e(IpV4UdpPacketHandler.class.getName(), "Ip v4 udp handler have exception.", e);
             }

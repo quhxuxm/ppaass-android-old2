@@ -1,234 +1,107 @@
 package com.ppaass.agent.service.handler;
 
 import android.util.Log;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.ppaass.agent.cryptography.CryptographyUtil;
-import com.ppaass.agent.protocol.message.*;
+import com.ppaass.agent.protocol.message.AgentMessagePayload;
+import com.ppaass.agent.protocol.message.Message;
+import com.ppaass.agent.protocol.message.PayloadEncryptionType;
+import com.ppaass.agent.protocol.message.ProxyMessagePayload;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 
+import java.io.IOException;
+
 public class PpaassMessageUtil {
-    public static PpaassMessageUtil INSTANCE = new PpaassMessageUtil();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    public static final PpaassMessageUtil INSTANCE = new PpaassMessageUtil();
 
     private PpaassMessageUtil() {
     }
 
     public Message parseMessageBytes(ByteBuf messageBytes) {
-        var result = new Message();
-        var idLength = messageBytes.readShort() & 0xFFFF;
-        var idBytes = new byte[idLength];
-        messageBytes.readBytes(idBytes);
-        var id = new String(idBytes);
-        result.setId(id);
-        var refIdLength = messageBytes.readShort() & 0xFFFF;
-        var refIdBytes = new byte[refIdLength];
-        messageBytes.readBytes(refIdBytes);
-        var refId = new String(refIdBytes);
-        result.setRefId(refId);
-        var connectionIdLength = messageBytes.readShort() & 0xFFFF;
-        var connectionIdBytes = new byte[connectionIdLength];
-        messageBytes.readBytes(connectionIdBytes);
-        var connectionId = new String(connectionIdBytes);
-        result.setConnectionId(connectionId);
-        var userTokenLength = messageBytes.readShort() & 0xFFFF;
-        var userTokenBytes = new byte[userTokenLength];
-        messageBytes.readBytes(userTokenBytes);
-        var userToken = new String(userTokenBytes);
-        result.setUserToken(userToken);
-        var payloadEncryptionTypeValue = messageBytes.readByte();
-        var payloadEncryptionType = PayloadEncryptionType.from(payloadEncryptionTypeValue);
-        var payloadEncryptionTokenLength = messageBytes.readShort() & 0xFFFF;
-        var payloadEncryptionToken = new byte[payloadEncryptionTokenLength];
-        messageBytes.readBytes(payloadEncryptionToken);
-        var messagePayloadLength = messageBytes.readLong();
-        switch (payloadEncryptionType) {
-            case Plain: {
-                result.setPayloadEncryptionType(PayloadEncryptionType.Plain);
-                var payloadBytes = new byte[(int) messagePayloadLength];
-                messageBytes.readBytes(payloadBytes);
-                result.setPayload(payloadBytes);
-                return result;
-            }
-            case Aes: {
-                result.setPayloadEncryptionType(PayloadEncryptionType.Aes);
-                //TODO RSA decrypt encryption token
-                payloadEncryptionToken = CryptographyUtil.INSTANCE.rsaDecrypt(payloadEncryptionToken);
-                result.setPayloadEncryptionToken(payloadEncryptionToken);
-                //TODO Decrypt payload with Aes
-                var payloadBytes = new byte[(int) messagePayloadLength];
-                messageBytes.readBytes(payloadBytes);
-                payloadBytes = CryptographyUtil.INSTANCE.aesDecrypt(payloadEncryptionToken, payloadBytes);
-                Log.d(PpaassMessageUtil.class.getName(),
-                        "Message payload bytes:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(payloadBytes)) +
-                                "\n");
-                result.setPayload(payloadBytes);
-                return result;
-            }
+        byte[] messageBytesArray = new byte[messageBytes.readableBytes()];
+        messageBytes.readBytes(messageBytesArray);
+        Message result = null;
+        try {
+            result = OBJECT_MAPPER.readValue(messageBytesArray, Message.class);
+        } catch (IOException e) {
+            Log.e(PpaassMessageUtil.class.getName(), "Fail to parse bytes to message.", e);
+            throw new RuntimeException(e);
+        }
+        if (PayloadEncryptionType.Plain == result.getPayloadEncryption().getType()) {
+            return result;
+        }
+        if (PayloadEncryptionType.Aes == result.getPayloadEncryption().getType()) {
+            var payloadEncryptionToken =
+                    CryptographyUtil.INSTANCE.rsaDecrypt(result.getPayloadEncryption().getToken());
+            result.getPayloadEncryption().setToken(payloadEncryptionToken);
+            var decryptedPayloadBytes =
+                    CryptographyUtil.INSTANCE.aesDecrypt(payloadEncryptionToken, result.getPayload());
+            Log.d(PpaassMessageUtil.class.getName(),
+                    "Message payload bytes:\n" +
+                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(decryptedPayloadBytes)) +
+                            "\n");
+            result.setPayload(decryptedPayloadBytes);
+            return result;
         }
         throw new IllegalStateException();
     }
 
     public ProxyMessagePayload parseProxyMessagePayloadBytes(byte[] payloadBytes) {
-        var result = new ProxyMessagePayload();
-        var payloadByteBuf = Unpooled.wrappedBuffer(payloadBytes);
-        var payloadType = payloadByteBuf.readByte();
-        result.setPayloadType(ProxyMessagePayloadType.from((byte) payloadType));
-        var sourceAddressExist = payloadByteBuf.readBoolean();
-        if (sourceAddressExist) {
-            var sourceAddress = readNetAddress(payloadByteBuf);
-            result.setSourceAddress(sourceAddress);
+        ProxyMessagePayload result = null;
+        try {
+            result = OBJECT_MAPPER.readValue(payloadBytes, ProxyMessagePayload.class);
+        } catch (IOException e) {
+            Log.e(PpaassMessageUtil.class.getName(), "Fail to parse bytes to proxy message payload.", e);
+            throw new RuntimeException(e);
         }
-        var targetAddressExist = payloadByteBuf.readBoolean();
-        if (targetAddressExist) {
-            var targetAddress = readNetAddress(payloadByteBuf);
-            result.setTargetAddress(targetAddress);
-        }
-        var dataLength = payloadByteBuf.readLong();
-        var data = new byte[(int) dataLength];
-        payloadByteBuf.readBytes(data);
-        result.setData(data);
-        return result;
-    }
-
-    private NetAddress readNetAddress(ByteBuf payloadByteBuf) {
-        byte addressType = payloadByteBuf.readByte();
-        NetAddressType netAddressType = NetAddressType.from(addressType);
-        switch (netAddressType) {
-            case IpV4: {
-                byte[] ipV4Address = new byte[4];
-                for (int i = 0; i < ipV4Address.length; i++) {
-                    ipV4Address[i] = payloadByteBuf.readByte();
-                }
-                int port = payloadByteBuf.readShort() & 0xFFFF;
-                NetAddress result = new NetAddress();
-                result.setType(NetAddressType.IpV4);
-                result.setHost(ipV4Address);
-                result.setPort(port);
-                return result;
-            }
-            case IpV6: {
-                byte[] ipV6Address = new byte[16];
-                for (int i = 0; i < ipV6Address.length; i++) {
-                    ipV6Address[i] = payloadByteBuf.readByte();
-                }
-                int port = payloadByteBuf.readShort() & 0xFFFF;
-                NetAddress result = new NetAddress();
-                result.setType(NetAddressType.IpV6);
-                result.setHost(ipV6Address);
-                result.setPort(port);
-                return result;
-            }
-            case Domain: {
-                int domainLength = payloadByteBuf.readInt();
-                byte[] hostNameBytes = new byte[domainLength];
-                payloadByteBuf.readBytes(hostNameBytes);
-                int port = payloadByteBuf.readShort() & 0xFFFF;
-                NetAddress result = new NetAddress();
-                result.setType(NetAddressType.Domain);
-                result.setHost(hostNameBytes);
-                result.setPort(port);
-                return result;
-            }
-        }
-        throw new UnsupportedOperationException();
-    }
-
-    public byte[] generateNetAddressBytes(NetAddress netAddress) {
-        ByteBuf resultBuf = Unpooled.buffer();
-        resultBuf.writeByte(netAddress.getType().getValue());
-        if (NetAddressType.IpV4 == netAddress.getType()) {
-            resultBuf.writeBytes(netAddress.getHost());
-            resultBuf.writeShort(netAddress.getPort());
-            byte[] result = new byte[resultBuf.readableBytes()];
-            resultBuf.readBytes(result);
-            return result;
-        }
-        if (NetAddressType.IpV6 == netAddress.getType()) {
-            resultBuf.writeBytes(netAddress.getHost());
-            resultBuf.writeShort(netAddress.getPort());
-            byte[] result = new byte[resultBuf.readableBytes()];
-            resultBuf.readBytes(result);
-            return result;
-        }
-        resultBuf.writeInt(netAddress.getHost().length);
-        resultBuf.writeBytes(netAddress.getHost());
-        resultBuf.writeShort(netAddress.getPort());
-        byte[] result = new byte[resultBuf.readableBytes()];
-        resultBuf.readBytes(result);
         return result;
     }
 
     public byte[] generateAgentMessagePayloadBytes(AgentMessagePayload agentMessagePayload) {
-        ByteBuf resultBuf = Unpooled.buffer();
-        resultBuf.writeByte(agentMessagePayload.getPayloadType().getValue());
-        if (agentMessagePayload.getSourceAddress() == null) {
-            resultBuf.writeBoolean(false);
-        } else {
-            resultBuf.writeBoolean(true);
-            resultBuf.writeBytes(this.generateNetAddressBytes(agentMessagePayload.getSourceAddress()));
+        try {
+            return OBJECT_MAPPER.writeValueAsBytes(agentMessagePayload);
+        } catch (JsonProcessingException e) {
+            Log.e(PpaassMessageUtil.class.getName(), "Fail to write agent message payload as bytes.", e);
+            throw new RuntimeException(e);
         }
-        if (agentMessagePayload.getTargetAddress() == null) {
-            resultBuf.writeBoolean(false);
-        } else {
-            resultBuf.writeBoolean(true);
-            resultBuf.writeBytes(this.generateNetAddressBytes(agentMessagePayload.getTargetAddress()));
-        }
-        if (agentMessagePayload.getData() == null) {
-            resultBuf.writeLong(0);
-            byte[] result = new byte[resultBuf.readableBytes()];
-            resultBuf.readBytes(result);
-            return result;
-        }
-        resultBuf.writeLong(agentMessagePayload.getData().length);
-        resultBuf.writeBytes(agentMessagePayload.getData());
-        byte[] result = new byte[resultBuf.readableBytes()];
-        resultBuf.readBytes(result);
-        return result;
     }
 
     public byte[] generateMessageBytes(Message message) {
-        ByteBuf resultBuf = Unpooled.buffer();
-        resultBuf.writeShort(message.getId().length());
-        resultBuf.writeBytes(message.getId().getBytes());
-        if (message.getRefId() == null) {
-            resultBuf.writeShort(0);
-        } else {
-            resultBuf.writeShort(message.getRefId().length());
-            resultBuf.writeBytes(message.getRefId().getBytes());
-        }
-        if (message.getConnectionId() == null) {
-            resultBuf.writeShort(0);
-        } else {
-            resultBuf.writeShort(message.getConnectionId().length());
-            resultBuf.writeBytes(message.getConnectionId().getBytes());
-        }
-        resultBuf.writeShort(message.getUserToken().length());
-        resultBuf.writeBytes(message.getUserToken().getBytes());
-        resultBuf.writeByte(message.getPayloadEncryptionType().getValue());
+        byte[] originalPayloadRsaEncryptionToken = message.getPayloadEncryption().getToken();
         byte[] rsaEncryptedPayloadEncryptionToken =
-                CryptographyUtil.INSTANCE.rsaEncrypt(message.getPayloadEncryptionToken());
-        resultBuf.writeShort(rsaEncryptedPayloadEncryptionToken.length);
-        resultBuf.writeBytes(rsaEncryptedPayloadEncryptionToken);
+                CryptographyUtil.INSTANCE.rsaEncrypt(originalPayloadRsaEncryptionToken);
+        message.getPayloadEncryption().setToken(rsaEncryptedPayloadEncryptionToken);
         if (message.getPayload() == null) {
-            resultBuf.writeLong(0);
-            byte[] result = new byte[resultBuf.readableBytes()];
-            resultBuf.readBytes(result);
-            return result;
+            try {
+                return OBJECT_MAPPER.writeValueAsBytes(message);
+            } catch (JsonProcessingException e) {
+                Log.e(PpaassMessageUtil.class.getName(), "Fail to write message as bytes.", e);
+                throw new RuntimeException(e);
+            }
         }
-        if (PayloadEncryptionType.Aes == message.getPayloadEncryptionType()) {
-            byte[] encryptedPayload = CryptographyUtil.INSTANCE.aesEncrypt(message.getPayloadEncryptionToken(),
+        if (PayloadEncryptionType.Aes == message.getPayloadEncryption().getType()) {
+            byte[] encryptedPayload = CryptographyUtil.INSTANCE.aesEncrypt(originalPayloadRsaEncryptionToken,
                     message.getPayload());
-            resultBuf.writeLong(encryptedPayload.length);
-            resultBuf.writeBytes(encryptedPayload);
-            byte[] result = new byte[resultBuf.readableBytes()];
-            resultBuf.readBytes(result);
-            return result;
+            message.setPayload(encryptedPayload);
+            try {
+                return OBJECT_MAPPER.writeValueAsBytes(message);
+            } catch (JsonProcessingException e) {
+                Log.e(PpaassMessageUtil.class.getName(), "Fail to write message as bytes.", e);
+                throw new RuntimeException(e);
+            }
         }
         //Plain
-        resultBuf.writeLong(message.getPayload().length);
-        resultBuf.writeBytes(message.getPayload());
-        byte[] result = new byte[resultBuf.readableBytes()];
-        resultBuf.readBytes(result);
-        return result;
+        try {
+            return OBJECT_MAPPER.writeValueAsBytes(message);
+        } catch (JsonProcessingException e) {
+            Log.e(PpaassMessageUtil.class.getName(), "Fail to write message as bytes.", e);
+            throw new RuntimeException(e);
+        }
     }
 }

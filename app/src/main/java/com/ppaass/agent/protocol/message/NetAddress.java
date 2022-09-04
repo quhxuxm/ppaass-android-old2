@@ -1,42 +1,35 @@
 package com.ppaass.agent.protocol.message;
 
-import java.util.Arrays;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class NetAddress {
-    private int port;
-    private byte[] host;
-    private NetAddressType type;
+    private final NetAddressValue value;
+    private final NetAddressType type;
 
-    public int getPort() {
-        return port;
+    @JsonCreator
+    public NetAddress(
+            @JsonProperty("type")
+            NetAddressType type,
+            @JsonProperty("value")
+            NetAddressValue value) {
+        this.value = value;
+        this.type = type;
     }
 
-    public void setPort(int port) {
-        this.port = port;
-    }
-
-    public byte[] getHost() {
-        return host;
-    }
-
-    public void setHost(byte[] host) {
-        this.host = host;
+    public NetAddressValue getValue() {
+        return value;
     }
 
     public NetAddressType getType() {
         return type;
     }
 
-    public void setType(NetAddressType type) {
-        this.type = type;
-    }
-
     @Override
     public String toString() {
         return "NetAddress{" +
                 "type=" + type +
-                ", host=" + Arrays.toString(host) +
-                ", port=" + port +
+                ", value=" + value +
                 '}';
     }
 }

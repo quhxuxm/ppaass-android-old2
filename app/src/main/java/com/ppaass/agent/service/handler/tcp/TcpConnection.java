@@ -240,20 +240,18 @@ public class TcpConnection implements Runnable {
         var messageRelayToProxy = new Message();
         messageRelayToProxy.setId(UUIDUtil.INSTANCE.generateUuid());
         messageRelayToProxy.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
-        messageRelayToProxy.setPayloadEncryptionType(PayloadEncryptionType.Aes);
-        messageRelayToProxy.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
+        messageRelayToProxy.setPayloadEncryption(
+                new PayloadEncryption(PayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
         var agentMessagePayload = new AgentMessagePayload();
         agentMessagePayload.setData(deviceInboundTcpPacket.getData());
         agentMessagePayload.setPayloadType(AgentMessagePayloadType.TcpData);
-        var sourceAddress = new NetAddress();
-        sourceAddress.setHost(this.repositoryKey.getSourceAddress());
-        sourceAddress.setPort((short) this.repositoryKey.getSourcePort());
-        sourceAddress.setType(NetAddressType.IpV4);
+        var sourceAddress =
+                new NetAddress(NetAddressType.IpV4, new NetAddressValue(this.repositoryKey.getSourceAddress(),
+                        this.repositoryKey.getSourcePort()));
         agentMessagePayload.setSourceAddress(sourceAddress);
-        var targetAddress = new NetAddress();
-        targetAddress.setHost(this.repositoryKey.getDestinationAddress());
-        targetAddress.setPort((short) this.repositoryKey.getDestinationPort());
-        targetAddress.setType(NetAddressType.IpV4);
+        var targetAddress =
+                new NetAddress(NetAddressType.IpV4, new NetAddressValue(this.repositoryKey.getDestinationAddress(),
+                        this.repositoryKey.getDestinationPort()));
         agentMessagePayload.setTargetAddress(targetAddress);
         messageRelayToProxy.setPayload(
                 PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(

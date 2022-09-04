@@ -149,19 +149,17 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             return;
         }
         try {
-            NetAddress sourceAddress = new NetAddress();
-            sourceAddress.setHost(ipV4Header.getSourceAddress());
-            sourceAddress.setPort(udpPacket.getHeader().getSourcePort());
-            sourceAddress.setType(NetAddressType.IpV4);
-            NetAddress targetAddress = new NetAddress();
-            targetAddress.setType(NetAddressType.IpV4);
-            targetAddress.setHost(ipV4Header.getDestinationAddress());
-            targetAddress.setPort(udpPacket.getHeader().getDestinationPort());
+            NetAddress sourceAddress = new NetAddress(NetAddressType.IpV4, new NetAddressValue(
+                    ipV4Header.getSourceAddress(), udpPacket.getHeader().getSourcePort()
+            ));
+            NetAddress targetAddress = new NetAddress(NetAddressType.IpV4, new NetAddressValue(
+                    ipV4Header.getDestinationAddress(), udpPacket.getHeader().getDestinationPort()
+            ));
             Message domainResolveMessage = new Message();
             domainResolveMessage.setId(UUIDUtil.INSTANCE.generateUuid());
             domainResolveMessage.setUserToken(IVpnConst.PPAASS_USER_TOKEN);
-            domainResolveMessage.setPayloadEncryptionType(PayloadEncryptionType.Aes);
-            domainResolveMessage.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
+            domainResolveMessage.setPayloadEncryption(
+                    new PayloadEncryption(PayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
             AgentMessagePayload domainResolveMessagePayload = new AgentMessagePayload();
             domainResolveMessagePayload.setSourceAddress(sourceAddress);
             domainResolveMessagePayload.setTargetAddress(targetAddress);

@@ -5,8 +5,7 @@ public class Message {
     private String refId;
     private String connectionId;
     private String userToken;
-    private PayloadEncryptionType payloadEncryptionType;
-    private byte[] payloadEncryptionToken;
+    private PayloadEncryption payloadEncryption;
     private byte[] payload;
 
     public String getId() {
@@ -41,20 +40,12 @@ public class Message {
         this.userToken = userToken;
     }
 
-    public PayloadEncryptionType getPayloadEncryptionType() {
-        return payloadEncryptionType;
+    public PayloadEncryption getPayloadEncryption() {
+        return payloadEncryption;
     }
 
-    public void setPayloadEncryptionType(PayloadEncryptionType payloadEncryptionType) {
-        this.payloadEncryptionType = payloadEncryptionType;
-    }
-
-    public byte[] getPayloadEncryptionToken() {
-        return payloadEncryptionToken;
-    }
-
-    public void setPayloadEncryptionToken(byte[] payloadEncryptionToken) {
-        this.payloadEncryptionToken = payloadEncryptionToken;
+    public void setPayloadEncryption(PayloadEncryption payloadEncryption) {
+        this.payloadEncryption = payloadEncryption;
     }
 
     public byte[] getPayload() {
@@ -72,8 +63,7 @@ public class Message {
                 ", refId='" + refId + '\'' +
                 ", connectionId='" + connectionId + '\'' +
                 ", userToken='" + userToken + '\'' +
-                ", payloadEncryptionType=" + payloadEncryptionType +
-                ", payloadEncryptionToken size=" + payloadEncryptionToken.length +
+                ", payloadEncryption=" + payloadEncryption +
                 ", payload data size=" + payload.length +
                 '}';
     }

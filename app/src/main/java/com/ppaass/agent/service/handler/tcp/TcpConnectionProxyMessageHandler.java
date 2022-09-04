@@ -35,19 +35,19 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         Message messageConnectToRemote = new Message();
         messageConnectToRemote.setId(UUIDUtil.INSTANCE.generateUuid());
         messageConnectToRemote.setUserToken(IVpnConst.PPAASS_USER_TOKEN);
-        messageConnectToRemote.setPayloadEncryptionType(PayloadEncryptionType.Plain);
-        messageConnectToRemote.setPayloadEncryptionToken(UUIDUtil.INSTANCE.generateUuidInBytes());
+        messageConnectToRemote.setPayloadEncryption(
+                new PayloadEncryption(PayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
         AgentMessagePayload connectToRemoteMessagePayload = new AgentMessagePayload();
         connectToRemoteMessagePayload.setPayloadType(AgentMessagePayloadType.TcpConnect);
-        NetAddress sourceAddress = new NetAddress();
-        sourceAddress.setHost(tcpConnection.getRepositoryKey().getSourceAddress());
-        sourceAddress.setPort((short) tcpConnection.getRepositoryKey().getSourcePort());
-        sourceAddress.setType(NetAddressType.IpV4);
+        NetAddress sourceAddress = new NetAddress(NetAddressType.IpV4, new NetAddressValue(
+                tcpConnection.getRepositoryKey().getSourceAddress(),
+                tcpConnection.getRepositoryKey().getSourcePort()
+        ));
         connectToRemoteMessagePayload.setSourceAddress(sourceAddress);
-        NetAddress targetAddress = new NetAddress();
-        targetAddress.setHost(tcpConnection.getRepositoryKey().getDestinationAddress());
-        targetAddress.setPort((short) tcpConnection.getRepositoryKey().getDestinationPort());
-        targetAddress.setType(NetAddressType.IpV4);
+        NetAddress targetAddress = new NetAddress(NetAddressType.IpV4, new NetAddressValue(
+                tcpConnection.getRepositoryKey().getDestinationAddress(),
+                tcpConnection.getRepositoryKey().getDestinationPort()
+        ));
         connectToRemoteMessagePayload.setTargetAddress(targetAddress);
         messageConnectToRemote.setPayload(
                 PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
@@ -81,7 +81,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
                             tcpConnection);
             return;
         }
-        if (ProxyMessagePayloadType.TcpData == proxyMessagePayload.getPayloadType()) {
+        if (ProxyMessagePayloadType.TcpDataSuccess == proxyMessagePayload.getPayloadType()) {
             ByteBuf remoteDataBuf = Unpooled.wrappedBuffer(proxyMessagePayload.getData());
             while (remoteDataBuf.isReadable()) {
                 int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
