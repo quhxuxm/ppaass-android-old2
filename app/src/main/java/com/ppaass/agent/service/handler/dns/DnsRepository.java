@@ -15,12 +15,24 @@ public class DnsRepository {
     private SharedPreferences sharedPreferences;
 
     private DnsRepository() {
+    }
+
+    public void init(SharedPreferences sharedPreferences) {
+        this.sharedPreferences = sharedPreferences;
         var legacyEntryToRemove = new ArrayList<String>();
         sharedPreferences.getAll().forEach((k, v) -> {
             DnsEntry dnsEntry = null;
             try {
                 dnsEntry = OBJECT_MAPPER.readValue((String) v, DnsEntry.class);
             } catch (JsonProcessingException e) {
+                legacyEntryToRemove.add(k);
+                return;
+            }
+            if (dnsEntry == null) {
+                legacyEntryToRemove.add(k);
+                return;
+            }
+            if (dnsEntry.getLastAccessTime() == null) {
                 legacyEntryToRemove.add(k);
                 return;
             }
@@ -31,10 +43,6 @@ public class DnsRepository {
         var preferenceEditor = sharedPreferences.edit();
         legacyEntryToRemove.forEach(preferenceEditor::remove);
         preferenceEditor.apply();
-    }
-
-    public void init(SharedPreferences sharedPreferences) {
-        this.sharedPreferences = sharedPreferences;
     }
 
     public synchronized DnsEntry getAddress(String domainName) {
@@ -50,18 +58,17 @@ public class DnsRepository {
     }
 
     public synchronized void saveAddresses(String domainName, List<byte[]> addresses) {
-        DnsEntry entryToInsert;
-        var existingDnsEntry = this.getAddress(domainName);
-        if (existingDnsEntry == null) {
+        var entryToInsert = this.getAddress(domainName);
+        if (entryToInsert == null) {
             entryToInsert = new DnsEntry();
             entryToInsert.setName(domainName);
-            entryToInsert.setLastAccessTime(System.currentTimeMillis());
             entryToInsert.setAddresses(addresses);
         } else {
             var addressesToAdd = new ArrayList<byte[]>();
+            var finalEntryToInsert = entryToInsert;
             addresses.forEach(saveAddressBytes -> {
                 boolean existing = false;
-                for (byte[] existingAddressBytes : existingDnsEntry.getAddresses()) {
+                for (byte[] existingAddressBytes : finalEntryToInsert.getAddresses()) {
                     if (Arrays.equals(existingAddressBytes, saveAddressBytes)) {
                         existing = true;
                         break;
@@ -71,10 +78,11 @@ public class DnsRepository {
                     addressesToAdd.add(saveAddressBytes);
                 }
             });
-            existingDnsEntry.getAddresses().addAll(addressesToAdd);
+            entryToInsert.getAddresses().addAll(addressesToAdd);
         }
+        entryToInsert.setLastAccessTime(System.currentTimeMillis());
         try {
-            var dnsEntryString = OBJECT_MAPPER.writeValueAsString(existingDnsEntry);
+            var dnsEntryString = OBJECT_MAPPER.writeValueAsString(entryToInsert);
             SharedPreferences.Editor sharedPreferenceEditor = this.sharedPreferences.edit();
             sharedPreferenceEditor.putString(domainName, dnsEntryString);
             sharedPreferenceEditor.apply();

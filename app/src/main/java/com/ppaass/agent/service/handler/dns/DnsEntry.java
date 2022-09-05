@@ -7,7 +7,7 @@ import java.util.Set;
 public class DnsEntry {
     private String name;
     private List<byte[]> addresses;
-    private long lastAccessTime;
+    private Long lastAccessTime;
 
     public String getName() {
         return name;
@@ -25,11 +25,11 @@ public class DnsEntry {
         this.addresses = addresses;
     }
 
-    public long getLastAccessTime() {
+    public Long getLastAccessTime() {
         return lastAccessTime;
     }
 
-    public void setLastAccessTime(long lastAccessTime) {
+    public void setLastAccessTime(Long lastAccessTime) {
         this.lastAccessTime = lastAccessTime;
     }
 }
