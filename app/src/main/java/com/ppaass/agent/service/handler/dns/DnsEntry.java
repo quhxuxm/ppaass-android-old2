@@ -6,7 +6,7 @@ import java.util.Set;
 
 public class DnsEntry {
     private String name;
-    private List<InetAddress> addresses;
+    private List<byte[]> addresses;
     private long lastAccessTime;
 
     public String getName() {
@@ -17,11 +17,11 @@ public class DnsEntry {
         this.name = name;
     }
 
-    public List<InetAddress> getAddresses() {
+    public List<byte[]> getAddresses() {
         return addresses;
     }
 
-    public void setAddresses(List<InetAddress> addresses) {
+    public void setAddresses(List<byte[]> addresses) {
         this.addresses = addresses;
     }
 

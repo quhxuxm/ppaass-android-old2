@@ -18,7 +18,8 @@ import io.netty.handler.codec.dns.*;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
+import java.util.Arrays;
+import java.util.Collections;
 
 public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
     private final ObjectMapper objectMapper;
@@ -44,13 +45,8 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
             Log.d(UdpProxyMessageHandler.class.getName(),
                     "<<<<----#### Domain resolve response: " + domainResolveResponse);
             domainResolveResponse.getAddresses().forEach(addressBytes -> {
-                try {
-                    DnsRepository.INSTANCE.saveAddress(domainResolveResponse.getName(),
-                            InetAddress.getByAddress(addressBytes));
-                } catch (UnknownHostException e) {
-                    Log.e(UdpProxyMessageHandler.class.getName(),
-                            "Fail to save domain name to address mapping because of error.", e);
-                }
+                DnsRepository.INSTANCE.saveAddresses(domainResolveResponse.getName(),
+                        Collections.singletonList(addressBytes));
             });
             NetAddress sourceNetAddress = proxyMessagePayload.getSourceAddress();
             NetAddress targetNetAddress = proxyMessagePayload.getTargetAddress();

@@ -1,5 +1,6 @@
 package com.ppaass.agent.activity;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.VpnService;
 import android.os.Bundle;
@@ -8,6 +9,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import com.ppaass.agent.R;
 import com.ppaass.agent.service.PpaassVpnService;
+import com.ppaass.agent.service.handler.dns.DnsRepository;
 
 public class MainActivity extends AppCompatActivity {
     private static final int VPN_SERVICE_REQUEST_CODE = 1;
@@ -16,6 +18,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        DnsRepository.INSTANCE.init(this.getSharedPreferences("PpaassVpnDns", Context.MODE_PRIVATE));
         var startVpnButton = this.findViewById(R.id.startButton);
         startVpnButton.setOnClickListener(view -> {
             Log.d(MainActivity.class.getName(), "Click start button, going to start VPN service");
@@ -43,5 +46,10 @@ public class MainActivity extends AppCompatActivity {
             Intent startVpnServiceIntent = new Intent(this, PpaassVpnService.class);
             this.startService(startVpnServiceIntent);
         }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
     }
 }

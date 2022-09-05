@@ -16,6 +16,7 @@ import com.ppaass.agent.service.handler.PpaassMessageEncoder;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
 import com.ppaass.agent.service.handler.dns.DnsEntry;
 import com.ppaass.agent.service.handler.dns.DnsRepository;
+import com.ppaass.agent.service.handler.dns.DnsUtil;
 import com.ppaass.agent.util.UUIDUtil;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
@@ -44,16 +45,16 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
         this.objectMapper = new ObjectMapper();
-        this.proxyChannel = this.initializeProxyChannel();
+        this.initializeProxyChannel();
     }
 
-    private Channel initializeProxyChannel() throws Exception {
-        NioEventLoopGroup proxyEventLoopGroup = new NioEventLoopGroup(2);
+    private void initializeProxyChannel() throws Exception {
+        NioEventLoopGroup proxyEventLoopGroup = new NioEventLoopGroup(3);
         Bootstrap proxyBootstrap = new Bootstrap();
         proxyBootstrap.group(proxyEventLoopGroup);
         proxyBootstrap.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
-        proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
-        proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
+        proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 20 * 1000);
+        proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 20 * 1000);
         proxyBootstrap.option(ChannelOption.SO_KEEPALIVE, true);
         proxyBootstrap.option(ChannelOption.AUTO_READ, true);
         proxyBootstrap.option(ChannelOption.AUTO_CLOSE, false);
@@ -69,7 +70,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         });
         InetSocketAddress proxyAddress =
                 new InetSocketAddress(InetAddress.getByName(IVpnConst.PPAASS_PROXY_IP), IVpnConst.PPAASS_PROXY_PORT);
-        return proxyBootstrap.connect(proxyAddress).sync().channel();
+        this.proxyChannel = proxyBootstrap.connect(proxyAddress).sync().channel();
     }
 
     private DatagramDnsQuery parseDnsQuery(UdpPacket udpPacket, IpV4Header ipHeader) {
@@ -125,7 +126,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             cachedDnsEntry.getAddresses().forEach(inetAddress -> {
                 DefaultDnsRawRecord answerRecord =
                         new DefaultDnsRawRecord(dnsQueryName, DnsRecordType.A, 120,
-                                Unpooled.wrappedBuffer(inetAddress.getAddress()));
+                                Unpooled.wrappedBuffer(inetAddress));
                 cachedDnsResponse.addRecord(DnsSection.ANSWER, answerRecord);
             });
             EmbeddedChannel generateDnsResponseBytesChannel = new EmbeddedChannel();
@@ -172,7 +173,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             domainResolveMessage.setPayload(
                     PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(domainResolveMessagePayload));
             if (!this.proxyChannel.isActive()) {
-                this.proxyChannel = this.initializeProxyChannel();
+                this.initializeProxyChannel();
             }
             this.proxyChannel.writeAndFlush(domainResolveMessage);
             Log.d(IpV4UdpPacketHandler.class.getName(),

@@ -8,15 +8,6 @@ public class DomainResolveResponse {
     private int id;
     private String name;
     private List<byte[]> addresses;
-    private Integer port;
-
-    public Integer getPort() {
-        return port;
-    }
-
-    public void setPort(Integer port) {
-        this.port = port;
-    }
 
     public String getName() {
         return name;
