@@ -45,6 +45,12 @@ public class DnsRepository {
         preferenceEditor.apply();
     }
 
+    public synchronized void clearAll() {
+        var dnsSharedPreferenceEditor = this.sharedPreferences.edit();
+        dnsSharedPreferenceEditor.clear();
+        dnsSharedPreferenceEditor.apply();
+    }
+
     public synchronized DnsEntry getAddress(String domainName) {
         var dnsEntryString = this.sharedPreferences.getString(domainName, null);
         if (dnsEntryString == null) {

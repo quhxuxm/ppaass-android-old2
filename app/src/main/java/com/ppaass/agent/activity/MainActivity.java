@@ -37,6 +37,10 @@ public class MainActivity extends AppCompatActivity {
             stopService(stopVpnServiceIntent);
             Log.d(MainActivity.class.getName(), "Click stop button, going to stop VPN service");
         });
+        var clearDnsButton = this.findViewById(R.id.clearDnsButton);
+        clearDnsButton.setOnClickListener(view -> {
+            DnsRepository.INSTANCE.clearAll();
+        });
     }
 
     @Override

@@ -86,12 +86,6 @@ public class PpaassVpnService extends VpnService {
     }
 
     @Override
-    public void onTaskRemoved(Intent rootIntent) {
-        super.onTaskRemoved(rootIntent);
-        Log.i(PpaassVpnService.class.getName(), "Success to stop service(onTaskRemoved): " + this.id);
-    }
-
-    @Override
     public void onDestroy() {
         this.running = false;
         try {
