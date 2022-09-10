@@ -6,7 +6,6 @@ import com.ppaass.agent.protocol.general.ip.*;
 import com.ppaass.agent.protocol.general.tcp.*;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
-import io.netty.buffer.Unpooled;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -267,7 +266,9 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
         ipPacketBytes.get(bytesWriteToDevice);
         ipPacketBytes.clear();
-        this.rawDeviceOutputStream.write(bytesWriteToDevice);
-        this.rawDeviceOutputStream.flush();
+        synchronized (this.rawDeviceOutputStream) {
+            this.rawDeviceOutputStream.write(bytesWriteToDevice);
+            this.rawDeviceOutputStream.flush();
+        }
     }
 }

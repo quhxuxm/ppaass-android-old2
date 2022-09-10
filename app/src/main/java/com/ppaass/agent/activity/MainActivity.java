@@ -1,7 +1,10 @@
 package com.ppaass.agent.activity;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.net.VpnService;
 import android.os.Bundle;
 import android.util.Log;
@@ -40,6 +43,23 @@ public class MainActivity extends AppCompatActivity {
         var clearDnsButton = this.findViewById(R.id.clearDnsButton);
         clearDnsButton.setOnClickListener(view -> {
             DnsRepository.INSTANCE.clearAll();
+        });
+        var chooseAppButton = this.findViewById(R.id.chooseApplication);
+        chooseAppButton.setOnClickListener(view -> {
+            var packageManager = MainActivity.this.getPackageManager();
+            var packages = packageManager.getInstalledPackages(PackageManager.GET_SERVICES);
+            var dialogBuilder = new AlertDialog.Builder(this);
+            dialogBuilder.setTitle("Choose application");
+            var packageNameBuilder = new StringBuilder();
+            packages.forEach(p -> {
+                boolean isSysApp = (p.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 1;
+                if (!isSysApp) {
+                    packageNameBuilder.append(p.packageName).append("\n");
+                }
+            });
+            dialogBuilder.setMessage(packageNameBuilder.toString());
+            var dialog = dialogBuilder.create();
+            dialog.show();
         });
     }
 

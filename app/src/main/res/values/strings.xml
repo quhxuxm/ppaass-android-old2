@@ -3,4 +3,5 @@
     <string name="start_button_label">Start</string>
     <string name="stop_button_label">Stop</string>
     <string name="clear_dns_button_label">Clear DNS</string>
+    <string name="choose_app_button_label">Choose Application</string>
 </resources>

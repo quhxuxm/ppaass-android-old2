@@ -11,10 +11,9 @@ public interface IVpnConst {
     int TCP_WINDOW = 65535;
     String DNS = "149.28.219.182";
     String PPAASS_PROXY_IP = "149.28.219.182";
-    //    String PPAASS_PROXY_IP = "192.168.31.200";
+//        String PPAASS_PROXY_IP = "192.168.31.200";
     short PPAASS_PROXY_PORT = 80;
-    //    short PPAASS_PROXY_PORT = 9097;
-    String PPAASS_USER_TOKEN = "user1";
+//        short PPAASS_PROXY_PORT = 9097;
     String PPAASS_PROTOCOL_FLAG = "__PPAASS__";
     String TCP_CONNECTION = "TCP_CONNECTION";
     String PPAASS_PROXY_USER_TOKEN = "user1";

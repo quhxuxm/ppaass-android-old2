@@ -2,8 +2,10 @@ package com.ppaass.agent.service;
 
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
+import android.system.OsConstants;
 import android.util.Log;
 import com.ppaass.agent.R;
 import com.ppaass.agent.cryptography.CryptographyUtil;
@@ -53,6 +55,13 @@ public class PpaassVpnService extends VpnService {
                 .setMtu(IVpnConst.MTU)
                 .setBlocking(true);
         vpnBuilder.setSession(getString(R.string.app_name));
+        vpnBuilder.allowFamily(OsConstants.AF_INET);
+//        vpnBuilder.allowBypass();
+//        try {
+//            vpnBuilder.addAllowedApplication("org.mozilla.firefox");
+//        } catch (PackageManager.NameNotFoundException e) {
+//            throw new RuntimeException(e);
+//        }
         this.vpnInterface = vpnBuilder.establish();
         final FileDescriptor vpnFileDescriptor = vpnInterface.getFileDescriptor();
         this.rawDeviceInputStream = new FileInputStream(vpnFileDescriptor);

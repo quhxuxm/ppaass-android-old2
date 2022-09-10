@@ -34,7 +34,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
                         tcpConnection);
         Message messageConnectToRemote = new Message();
         messageConnectToRemote.setId(UUIDUtil.INSTANCE.generateUuid());
-        messageConnectToRemote.setUserToken(IVpnConst.PPAASS_USER_TOKEN);
+        messageConnectToRemote.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
         messageConnectToRemote.setPayloadEncryption(
                 new PayloadEncryption(PayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
         AgentMessagePayload connectToRemoteMessagePayload = new AgentMessagePayload();

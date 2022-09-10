@@ -13,10 +13,10 @@
                   android:orientation="vertical"
                   android:gravity="center_horizontal">
         <Button
-                android:text="@string/start_button_label"
+                android:text="@string/choose_app_button_label"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:id="@+id/startButton"
+                android:id="@+id/chooseApplication"
                 android:width="200dp"
                 android:height="80dp"
                 android:layout_margin="5dp"
@@ -26,6 +26,15 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:id="@+id/clearDnsButton"
+                android:width="200dp"
+                android:height="80dp"
+                android:layout_margin="5dp"
+                android:textSize="17sp"/>
+        <Button
+                android:text="@string/start_button_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:id="@+id/startButton"
                 android:width="200dp"
                 android:height="80dp"
                 android:layout_margin="5dp"

@@ -42,7 +42,7 @@ public class PpaassMessageUtil {
             result.getPayloadEncryption().setToken(payloadEncryptionToken);
             var decryptedPayloadBytes =
                     CryptographyUtil.INSTANCE.aesDecrypt(payloadEncryptionToken, result.getPayload());
-            Log.d(PpaassMessageUtil.class.getName(),
+            Log.v(PpaassMessageUtil.class.getName(),
                     "Message payload bytes:\n" +
                             ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(decryptedPayloadBytes)) +
                             "\n");

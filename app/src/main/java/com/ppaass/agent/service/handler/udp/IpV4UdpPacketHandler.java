@@ -16,9 +16,9 @@ import com.ppaass.agent.service.handler.PpaassMessageEncoder;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
 import com.ppaass.agent.service.handler.dns.DnsEntry;
 import com.ppaass.agent.service.handler.dns.DnsRepository;
-import com.ppaass.agent.service.handler.dns.DnsUtil;
 import com.ppaass.agent.util.UUIDUtil;
 import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -45,10 +45,14 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
         this.objectMapper = new ObjectMapper();
-        this.initializeProxyChannel();
+        try {
+            this.proxyChannel = this.initializeProxyChannel();
+        } catch (Exception e) {
+            Log.e(IpV4UdpPacketHandler.class.getName(), "Fail connect to proxy on udp handler.", e);
+        }
     }
 
-    private void initializeProxyChannel() throws Exception {
+    private Channel initializeProxyChannel() throws Exception {
         NioEventLoopGroup proxyEventLoopGroup = new NioEventLoopGroup(3);
         Bootstrap proxyBootstrap = new Bootstrap();
         proxyBootstrap.group(proxyEventLoopGroup);
@@ -68,9 +72,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
                 ch.pipeline().addLast(new PpaassMessageEncoder(false));
             }
         });
-        InetSocketAddress proxyAddress =
-                new InetSocketAddress(InetAddress.getByName(IVpnConst.PPAASS_PROXY_IP), IVpnConst.PPAASS_PROXY_PORT);
-        this.proxyChannel = proxyBootstrap.connect(proxyAddress).sync().channel();
+        return proxyBootstrap.connect(IVpnConst.PPAASS_PROXY_IP, IVpnConst.PPAASS_PROXY_PORT).sync().channel();
     }
 
     private DatagramDnsQuery parseDnsQuery(UdpPacket udpPacket, IpV4Header ipHeader) {
@@ -90,7 +92,8 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query: " + dnsQuery);
             return dnsQuery;
         } catch (Exception e) {
-            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when logging DNS Query.", e);
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when logging DNS Query, data:\n" +
+                    ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n.", e);
             return null;
         }
     }
@@ -158,7 +161,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             ));
             Message domainResolveMessage = new Message();
             domainResolveMessage.setId(UUIDUtil.INSTANCE.generateUuid());
-            domainResolveMessage.setUserToken(IVpnConst.PPAASS_USER_TOKEN);
+            domainResolveMessage.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
             domainResolveMessage.setPayloadEncryption(
                     new PayloadEncryption(PayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
             AgentMessagePayload domainResolveMessagePayload = new AgentMessagePayload();
@@ -172,8 +175,13 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             domainResolveMessagePayload.setData(domainResolveRequestBytes);
             domainResolveMessage.setPayload(
                     PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(domainResolveMessagePayload));
-            if (!this.proxyChannel.isActive()) {
-                this.initializeProxyChannel();
+            if (this.proxyChannel == null || !this.proxyChannel.isActive()) {
+                try {
+                    this.proxyChannel = this.initializeProxyChannel();
+                } catch (Exception e) {
+                    Log.e(IpV4UdpPacketHandler.class.getName(), "Fail connect to proxy on udp handler.", e);
+                    return;
+                }
             }
             this.proxyChannel.writeAndFlush(domainResolveMessage);
             Log.d(IpV4UdpPacketHandler.class.getName(),
@@ -204,7 +212,9 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
         ipPacketBytes.get(bytesWriteToDevice);
         ipPacketBytes.clear();
-        this.rawDeviceOutputStream.write(bytesWriteToDevice);
-        this.rawDeviceOutputStream.flush();
+        synchronized (this.rawDeviceOutputStream) {
+            this.rawDeviceOutputStream.write(bytesWriteToDevice);
+            this.rawDeviceOutputStream.flush();
+        }
     }
 }
