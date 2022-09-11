@@ -27,13 +27,13 @@ public class PpaassMessageEncoder extends MessageToByteEncoder<Message> {
             var compressedBodyBytes = lz4Compressor.compress(messageBytes);
             out.writeLong(compressedBodyBytes.length);
             out.writeBytes(compressedBodyBytes);
-            Log.d(PpaassMessageEncoder.class.getName(),
+            Log.v(PpaassMessageEncoder.class.getName(),
                     "Write following data to remote(compressed):\n" + ByteBufUtil.prettyHexDump(out) + "\n");
             return;
         }
         out.writeLong(messageBytes.length);
         out.writeBytes(messageBytes);
-        Log.d(PpaassMessageEncoder.class.getName(),
+        Log.v(PpaassMessageEncoder.class.getName(),
                 "Write following data to remote(non-compress):\n" + ByteBufUtil.prettyHexDump(out) + "\n");
     }
 }
