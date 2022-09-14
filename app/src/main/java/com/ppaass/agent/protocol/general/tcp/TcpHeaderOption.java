@@ -47,6 +47,9 @@ public class TcpHeaderOption {
 
     public TcpHeaderOption(Kind kind, byte[] info) {
         this.kind = kind;
+        if (info == null) {
+            info = new byte[]{};
+        }
         this.info = info;
     }
 

@@ -146,7 +146,9 @@ public class TcpPacketBuilder {
             } else {
                 optionAndPaddingByteBuffer.put((byte) (option.getKind().getInfoLength() + 2));
             }
-            optionAndPaddingByteBuffer.put(option.getInfo());
+            if (option.getInfo() != null) {
+                optionAndPaddingByteBuffer.put(option.getInfo());
+            }
         }
         int bytesNumber = optionAndPaddingByteBuffer.position();
         int paddingByteNumber = 0;

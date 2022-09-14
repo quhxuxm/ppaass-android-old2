@@ -95,7 +95,9 @@ public class TcpPacketWriter {
             } else {
                 optionAndPaddingByteBuffer.put((byte) ((option.getKind().getInfoLength() + 2) & 0xFF));
             }
-            optionAndPaddingByteBuffer.put(option.getInfo());
+            if (option.getInfo() != null) {
+                optionAndPaddingByteBuffer.put(option.getInfo());
+            }
         }
         int bytesNumber = Math.max(optionAndPaddingByteBuffer.position(), 0);
         int paddingByteNumber = 0;

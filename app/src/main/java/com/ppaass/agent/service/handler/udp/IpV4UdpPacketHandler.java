@@ -212,9 +212,9 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
         ipPacketBytes.get(bytesWriteToDevice);
         ipPacketBytes.clear();
-        synchronized (this.rawDeviceOutputStream) {
+//        synchronized (this.rawDeviceOutputStream) {
             this.rawDeviceOutputStream.write(bytesWriteToDevice);
             this.rawDeviceOutputStream.flush();
-        }
+//        }
     }
 }

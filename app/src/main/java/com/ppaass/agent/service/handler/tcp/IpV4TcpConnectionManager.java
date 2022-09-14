@@ -130,6 +130,7 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         ByteBuffer mssByteBuffer = ByteBuffer.allocate(2);
         mssByteBuffer.putShort((short) (IVpnConst.TCP_MSS & 0xFFFF));
         tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
+        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.SACK_PREMITTED, null));
         TcpPacket tcpPacket =
                 this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
         try {
@@ -231,19 +232,6 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         tcpPacketBuilder.sourcePort(connection.getRepositoryKey().getDestinationPort());
         tcpPacketBuilder.sequenceNumber(sequenceNumber);
         tcpPacketBuilder.acknowledgementNumber(acknowledgementNumber);
-        ByteBuffer mssBuffer = ByteBuffer.allocateDirect(2);
-        mssBuffer.putShort((short) (IVpnConst.TCP_MSS & 0xFFFF));
-        mssBuffer.flip();
-        byte[] mssBytes = new byte[2];
-        mssBuffer.get(mssBytes);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssBytes));
-        int timestamp = TIMESTAMP.getAndIncrement();
-        ByteBuffer timestampBuffer = ByteBuffer.allocateDirect(4);
-        timestampBuffer.putInt(timestamp);
-        timestampBuffer.flip();
-        byte[] timestampBytes = new byte[4];
-        timestampBuffer.get(timestampBytes);
-        tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, timestampBytes));
         return tcpPacketBuilder.build();
     }
 
@@ -254,8 +242,8 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         ipV4HeaderBuilder.destinationAddress(tcpConnection.getRepositoryKey().getSourceAddress());
         ipV4HeaderBuilder.sourceAddress(tcpConnection.getRepositoryKey().getDestinationAddress());
         ipV4HeaderBuilder.protocol(IpDataProtocol.TCP);
-        ipV4HeaderBuilder.ttl(64);
-        ipV4HeaderBuilder.flags(new IpFlags(false, false));
+        ipV4HeaderBuilder.ttl(128);
+        ipV4HeaderBuilder.flags(new IpFlags(true, false));
         ipPacketBuilder.header(ipV4HeaderBuilder.build());
         ipPacketBuilder.data(tcpPacket);
         IpPacket ipPacket = ipPacketBuilder.build();
@@ -266,9 +254,9 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         byte[] bytesWriteToDevice = new byte[ipPacketBytes.remaining()];
         ipPacketBytes.get(bytesWriteToDevice);
         ipPacketBytes.clear();
-        synchronized (this.rawDeviceOutputStream) {
+//        synchronized (this.rawDeviceOutputStream) {
             this.rawDeviceOutputStream.write(bytesWriteToDevice);
             this.rawDeviceOutputStream.flush();
-        }
+//        }
     }
 }
