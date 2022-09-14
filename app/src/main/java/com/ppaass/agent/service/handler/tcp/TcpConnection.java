@@ -281,8 +281,9 @@ public class TcpConnection implements Runnable {
                         agentMessagePayload));
         TcpConnection.this.currentAcknowledgementNumber.addAndGet(
                 deviceInboundTcpPacket.getData().length);
+        var senderTimestamp = this.findSenderTimestamp(deviceInboundTcpPacket.getHeader());
         this.proxyChannel.attr(IVpnConst.TCP_INBOUND_PACKET_TIMESTAMP)
-                .set(this.findSenderTimestamp(deviceInboundTcpPacket.getHeader()));
+                .set(senderTimestamp);
         this.proxyChannel.writeAndFlush(messageRelayToProxy).addListener((ChannelFutureListener) future -> {
             //Ack every device inbound packet.
             long ackNumber = TcpConnection.this.currentAcknowledgementNumber.get();
@@ -295,8 +296,7 @@ public class TcpConnection implements Runnable {
                                 deviceInboundTcpPacket);
                 TcpConnection.this.tcpIpPacketWriter.writeAckToDevice(null, TcpConnection.this,
                         TcpConnection.this.currentSequenceNumber.get(),
-                        ackNumber,
-                        this.findSenderTimestamp(deviceInboundTcpPacket.getHeader()));
+                        ackNumber, senderTimestamp);
             } else {
                 Log.e(TcpConnection.class.getName(),
                         "<<<<---- Fail to relay device inbound data to proxy, ack to device with [" +
