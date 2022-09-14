@@ -232,6 +232,15 @@ public class TcpConnection implements Runnable {
             Log.d(TcpConnection.class.getName(),
                     ">>>>>>>> Nothing to relay device inbound data to proxy, current connection: " +
                             this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
+            TcpConnection.this.tcpIpPacketWriter.writeAckToDevice(null, TcpConnection.this,
+                    TcpConnection.this.currentSequenceNumber.get(),
+                    TcpConnection.this.currentAcknowledgementNumber.get());
+            Log.d(TcpConnection.class.getName(),
+                    "<<<<---- Write ack to device, ack to device with [" +
+                            TcpConnection.this.currentAcknowledgementNumber.get() +
+                            "], current connection: " +
+                            TcpConnection.this + "; device inbound tcp packet: " +
+                            deviceInboundTcpPacket);
             return;
         }
         Log.d(TcpConnection.class.getName(),

@@ -1,6 +1,7 @@
 package com.ppaass.agent.service.handler;
 
 import android.util.Log;
+import com.ppaass.agent.PpaassVpnApplication;
 import com.ppaass.agent.protocol.general.icmp.IcmpPacket;
 import com.ppaass.agent.protocol.general.ip.IIpHeader;
 import com.ppaass.agent.protocol.general.ip.IpPacket;
@@ -25,14 +26,14 @@ public class IpPacketHandler {
     private final IpV4TcpConnectionManager ipV4TcpConnectionManager;
     private final IpV4UdpPacketHandler ipV4UdpPacketHandler;
     private final IpV4IcmpPacketHandler ipV4IcmpPacketHandler;
-    private final PpaassVpnService vpnService;
+    private final PpaassVpnApplication vpnApplication;
 
     public IpPacketHandler(FileInputStream rawDeviceInputStream, FileOutputStream rawDeviceOutputStream,
                            int readBufferSize,
-                           PpaassVpnService vpnService) throws Exception {
+                           PpaassVpnService vpnService, PpaassVpnApplication vpnApplication) throws Exception {
         this.rawDeviceInputChannel = rawDeviceInputStream.getChannel();
         this.readBufferSize = readBufferSize;
-        this.vpnService = vpnService;
+        this.vpnApplication = vpnApplication;
         this.ipV4TcpConnectionManager = new IpV4TcpConnectionManager(rawDeviceOutputStream, vpnService);
         this.ipV4UdpPacketHandler = new IpV4UdpPacketHandler(rawDeviceOutputStream, vpnService);
         this.ipV4IcmpPacketHandler = new IpV4IcmpPacketHandler();
@@ -40,7 +41,7 @@ public class IpPacketHandler {
 
     public void start() {
         Executors.newWorkStealingPool(8).execute(() -> {
-            while (IpPacketHandler.this.vpnService.isRunning()) {
+            while (IpPacketHandler.this.vpnApplication.isVpnStarted()) {
                 try {
                     IpPacket ipPacket = IpPacketHandler.this.read();
                     if (ipPacket == null) {

@@ -2,7 +2,7 @@ package com.ppaass.agent.service;
 
 public interface IVpnConst {
     int TCP_CONNECTION_IDLE_TIMEOUT_MS = 120 * 1000;
-    int DNS_IDLE_TIMEOUT_MS = 60 * 1000 * 60 * 24;
+    int DNS_IDLE_TIMEOUT_MS = Integer.MAX_VALUE;
     int TCP_CONNECTION_NUMBER = 256;
     int MTU = 1500;
     int READ_BUFFER_SIZE = MTU + 40;
