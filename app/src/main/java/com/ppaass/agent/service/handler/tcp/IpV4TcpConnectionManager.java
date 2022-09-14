@@ -6,6 +6,7 @@ import com.ppaass.agent.protocol.general.ip.*;
 import com.ppaass.agent.protocol.general.tcp.*;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
+import io.netty.buffer.Unpooled;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -17,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnectionManager {
     private static final Random RANDOM = new Random();
-    private static final AtomicInteger TIMESTAMP = new AtomicInteger();
+    private static final AtomicInteger TIMESTAMP = new AtomicInteger(0);
     private final FileOutputStream rawDeviceOutputStream;
     private final Map<TcpConnectionRepositoryKey, TcpConnectionWrapper> connectionRepository;
     private final VpnService vpnService;
@@ -122,7 +123,8 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         }
     }
 
-    public void writeSyncAckToDevice(TcpConnection connection, long sequenceNumber, long acknowledgementNumber) {
+    public void writeSyncAckToDevice(TcpConnection connection, long sequenceNumber, long acknowledgementNumber,
+                                     byte[] timestamp) {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.ack(true);
         tcpPacketBuilder.syn(true);
@@ -132,7 +134,8 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.MSS, mssByteBuffer.array()));
         tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.SACK_PREMITTED, null));
         TcpPacket tcpPacket =
-                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber,
+                        timestamp);
         try {
             this.write(connection, tcpPacket);
         } catch (IOException e) {
@@ -142,7 +145,7 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
     }
 
     public void writeAckToDevice(byte[] ackData, TcpConnection connection, long sequenceNumber,
-                                 long acknowledgementNumber) {
+                                 long acknowledgementNumber, byte[] timestamp) {
         TcpPacketBuilder tcpPacketBuilder = new TcpPacketBuilder();
         tcpPacketBuilder.ack(true);
         if (ackData != null) {
@@ -151,7 +154,8 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
         tcpPacketBuilder.data(ackData);
         TcpPacket tcpPacket =
-                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber,
+                        timestamp);
         try {
             this.write(connection, tcpPacket);
         } catch (IOException e) {
@@ -167,7 +171,7 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         tcpPacketBuilder.rst(true);
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
         TcpPacket tcpPacket =
-                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber, null);
         try {
             this.write(connection, tcpPacket);
         } catch (IOException e) {
@@ -182,7 +186,7 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         tcpPacketBuilder.rst(true);
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
         TcpPacket tcpPacket =
-                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber, null);
         try {
             this.write(connection, tcpPacket);
         } catch (IOException e) {
@@ -201,7 +205,7 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         }
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
         TcpPacket tcpPacket =
-                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber, null);
         try {
             this.write(connection, tcpPacket);
         } catch (IOException e) {
@@ -216,7 +220,7 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         tcpPacketBuilder.fin(true);
         tcpPacketBuilder.window(IVpnConst.TCP_WINDOW);
         TcpPacket tcpPacket =
-                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber);
+                this.buildCommonTcpPacket(tcpPacketBuilder, connection, sequenceNumber, acknowledgementNumber, null);
         try {
             this.write(connection, tcpPacket);
         } catch (IOException e) {
@@ -227,11 +231,22 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
 
     private TcpPacket buildCommonTcpPacket(TcpPacketBuilder tcpPacketBuilder, TcpConnection connection,
                                            long sequenceNumber,
-                                           long acknowledgementNumber) {
+                                           long acknowledgementNumber, byte[] senderTimestamp) {
         tcpPacketBuilder.destinationPort(connection.getRepositoryKey().getSourcePort());
         tcpPacketBuilder.sourcePort(connection.getRepositoryKey().getDestinationPort());
         tcpPacketBuilder.sequenceNumber(sequenceNumber);
         tcpPacketBuilder.acknowledgementNumber(acknowledgementNumber);
+        if (senderTimestamp != null) {
+            var senderTimestampByteBuf = Unpooled.wrappedBuffer(senderTimestamp);
+            var senderTime = senderTimestampByteBuf.readInt();
+            var senderTimeEcho = senderTimestampByteBuf.readInt();
+            var vpnTimestampByteBuf = Unpooled.buffer(8);
+            //Vpn timestamp
+            vpnTimestampByteBuf.writeInt(TIMESTAMP.getAndIncrement());
+            //Echo
+            vpnTimestampByteBuf.writeInt(senderTime);
+            tcpPacketBuilder.addOption(new TcpHeaderOption(TcpHeaderOption.Kind.TSPOT, vpnTimestampByteBuf.array()));
+        }
         return tcpPacketBuilder.build();
     }
 
@@ -255,8 +270,8 @@ public class IpV4TcpConnectionManager implements ITcpIpPacketWriter, ITcpConnect
         ipPacketBytes.get(bytesWriteToDevice);
         ipPacketBytes.clear();
 //        synchronized (this.rawDeviceOutputStream) {
-            this.rawDeviceOutputStream.write(bytesWriteToDevice);
-            this.rawDeviceOutputStream.flush();
+        this.rawDeviceOutputStream.write(bytesWriteToDevice);
+        this.rawDeviceOutputStream.flush();
 //        }
     }
 }

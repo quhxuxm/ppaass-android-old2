@@ -1,7 +1,9 @@
 package com.ppaass.agent.service;
 
+import io.netty.util.AttributeKey;
+
 public interface IVpnConst {
-    int TCP_CONNECTION_IDLE_TIMEOUT_MS = 120 * 1000;
+    int TCP_CONNECTION_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
     int DNS_IDLE_TIMEOUT_MS = Integer.MAX_VALUE;
     int TCP_CONNECTION_NUMBER = 256;
     int MTU = 1500;
@@ -9,6 +11,7 @@ public interface IVpnConst {
     //For VPN the mtu can be larger than 1500, but should not more than 65535
     int TCP_MSS = MTU - 40;
     int TCP_WINDOW = 65535;
+    AttributeKey<byte[]> TCP_INBOUND_PACKET_TIMESTAMP = AttributeKey.valueOf("TCP_INBOUND_PACKET_TIMESTAMP");
     String DNS = "149.28.219.182";
     String PPAASS_PROXY_IP = "149.28.219.182";
     //        String PPAASS_PROXY_IP = "192.168.31.200";

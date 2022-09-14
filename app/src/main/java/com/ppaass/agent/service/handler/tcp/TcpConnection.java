@@ -3,6 +3,8 @@ package com.ppaass.agent.service.handler.tcp;
 import android.net.VpnService;
 import android.util.Log;
 import androidx.annotation.NonNull;
+import com.ppaass.agent.protocol.general.tcp.TcpHeader;
+import com.ppaass.agent.protocol.general.tcp.TcpHeaderOption;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.message.*;
 import com.ppaass.agent.service.IVpnConst;
@@ -79,6 +81,16 @@ public class TcpConnection implements Runnable {
         this.proxyChannelConnectedPromise = new DefaultPromise<>(this.proxyChannelBootstrap.config().group().next());
     }
 
+    byte[] findSenderTimestamp(TcpHeader tcpHeader) {
+        var options = tcpHeader.getOptions();
+        for (var option : options) {
+            if (option.getKind() == TcpHeaderOption.Kind.TSPOT) {
+                return option.getInfo();
+            }
+        }
+        return null;
+    }
+
     public void run() {
         while (this.status.get() != TcpConnectionStatus.CLOSED) {
             try {
@@ -123,7 +135,8 @@ public class TcpConnection implements Runnable {
                         this.currentSequenceNumber.getAndIncrement();
                         this.tcpIpPacketWriter.writeAckToDevice(null, this,
                                 this.currentSequenceNumber.get(),
-                                this.currentAcknowledgementNumber.get());
+                                this.currentAcknowledgementNumber.get(),
+                                this.findSenderTimestamp(deviceInboundTcpHeader));
                         this.status.set(TcpConnectionStatus.TIME_WAIT);
                         Log.d(TcpConnection.class.getName(),
                                 ">>>>>>>> Receive ACK and begin to switch connection to TIME_WAIT, current connection: " +
@@ -234,7 +247,8 @@ public class TcpConnection implements Runnable {
                             this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
             TcpConnection.this.tcpIpPacketWriter.writeAckToDevice(null, TcpConnection.this,
                     TcpConnection.this.currentSequenceNumber.get(),
-                    TcpConnection.this.currentAcknowledgementNumber.get());
+                    TcpConnection.this.currentAcknowledgementNumber.get(),
+                    this.findSenderTimestamp(deviceInboundTcpPacket.getHeader()));
             Log.d(TcpConnection.class.getName(),
                     "<<<<---- Write ack to device, ack to device with [" +
                             TcpConnection.this.currentAcknowledgementNumber.get() +
@@ -267,6 +281,8 @@ public class TcpConnection implements Runnable {
                         agentMessagePayload));
         TcpConnection.this.currentAcknowledgementNumber.addAndGet(
                 deviceInboundTcpPacket.getData().length);
+        this.proxyChannel.attr(IVpnConst.TCP_INBOUND_PACKET_TIMESTAMP)
+                .set(this.findSenderTimestamp(deviceInboundTcpPacket.getHeader()));
         this.proxyChannel.writeAndFlush(messageRelayToProxy).addListener((ChannelFutureListener) future -> {
             //Ack every device inbound packet.
             long ackNumber = TcpConnection.this.currentAcknowledgementNumber.get();
@@ -279,7 +295,8 @@ public class TcpConnection implements Runnable {
                                 deviceInboundTcpPacket);
                 TcpConnection.this.tcpIpPacketWriter.writeAckToDevice(null, TcpConnection.this,
                         TcpConnection.this.currentSequenceNumber.get(),
-                        ackNumber);
+                        ackNumber,
+                        this.findSenderTimestamp(deviceInboundTcpPacket.getHeader()));
             } else {
                 Log.e(TcpConnection.class.getName(),
                         "<<<<---- Fail to relay device inbound data to proxy, ack to device with [" +
@@ -394,7 +411,8 @@ public class TcpConnection implements Runnable {
         this.vpnInitialSequenceNumber.set(vpnIsn);
         this.status.set(TcpConnectionStatus.SYNC_RCVD);
         this.tcpIpPacketWriter.writeSyncAckToDevice(this, this.currentSequenceNumber.get(),
-                this.currentAcknowledgementNumber.get() + 1);
+                this.currentAcknowledgementNumber.get() + 1,
+                this.findSenderTimestamp(deviceInboundTcpHeader));
         Log.d(TcpConnection.class.getName(),
                 ">>>>>>>> Receive SYNC and do SYNC+ACK, current connection: " + this +
                         "; device inbound tcp packet: " + deviceInboundPacket);
@@ -417,6 +435,7 @@ public class TcpConnection implements Runnable {
         result.group(new NioEventLoopGroup(1));
         result.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
         result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
+        result.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
         result.option(ChannelOption.SO_KEEPALIVE, true);
         result.option(ChannelOption.AUTO_READ, true);
         result.option(ChannelOption.AUTO_CLOSE, false);

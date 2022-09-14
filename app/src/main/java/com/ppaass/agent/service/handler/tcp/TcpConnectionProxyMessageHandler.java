@@ -63,6 +63,11 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         tcpConnection.setLatestActiveTime();
+        var tcpInboundPacketTimestampAttr = ctx.channel().attr(IVpnConst.TCP_INBOUND_PACKET_TIMESTAMP);
+        byte[] tcpInboundPacketTimestamp = null;
+        if (tcpInboundPacketTimestampAttr != null) {
+            tcpInboundPacketTimestamp = tcpInboundPacketTimestampAttr.get();
+        }
         //Relay remote data to device and use mss as the transfer unit
         byte[] proxyMessagePayloadBytes = proxyMessage.getPayload();
         ProxyMessagePayload proxyMessagePayload =
@@ -95,7 +100,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
                                 ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(mssData)));
                 this.tcpIpPacketWriter.writeAckToDevice(mssData, tcpConnection,
                         tcpConnection.getCurrentSequenceNumber().get(),
-                        tcpConnection.getCurrentAcknowledgementNumber().get());
+                        tcpConnection.getCurrentAcknowledgementNumber().get(), tcpInboundPacketTimestamp);
                 // Data should write to device first then increase the sequence number
                 tcpConnection.getCurrentSequenceNumber().getAndAdd(mssData.length);
             }
