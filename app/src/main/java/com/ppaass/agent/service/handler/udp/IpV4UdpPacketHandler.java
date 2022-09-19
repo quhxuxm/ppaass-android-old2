@@ -176,12 +176,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             domainResolveMessage.setPayload(
                     PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(domainResolveMessagePayload));
             if (this.proxyChannel == null || !this.proxyChannel.isActive()) {
-                try {
-                    this.proxyChannel = this.initializeProxyChannel();
-                } catch (Exception e) {
-                    Log.e(IpV4UdpPacketHandler.class.getName(), "Fail connect to proxy on udp handler.", e);
-                    return;
-                }
+                this.proxyChannel = this.initializeProxyChannel();
             }
             this.proxyChannel.writeAndFlush(domainResolveMessage);
             Log.d(IpV4UdpPacketHandler.class.getName(),
@@ -213,8 +208,8 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         ipPacketBytes.get(bytesWriteToDevice);
         ipPacketBytes.clear();
 //        synchronized (this.rawDeviceOutputStream) {
-            this.rawDeviceOutputStream.write(bytesWriteToDevice);
-            this.rawDeviceOutputStream.flush();
+        this.rawDeviceOutputStream.write(bytesWriteToDevice);
+        this.rawDeviceOutputStream.flush();
 //        }
     }
 }
