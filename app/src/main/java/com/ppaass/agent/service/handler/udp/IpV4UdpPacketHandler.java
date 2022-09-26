@@ -28,6 +28,8 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.dns.*;
+import io.netty.util.internal.StringUtil;
+import org.apache.commons.validator.routines.DomainValidator;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -115,6 +117,12 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         }
         int dnsQueryId = dnsQuery.id();
         String dnsQueryName = dnsQuestion.name();
+        if (StringUtil.isNullOrEmpty(dnsQueryName)) {
+            return;
+        }
+        if (!DomainValidator.getInstance().isValid(dnsQueryName)) {
+            return;
+        }
         DnsEntry cachedDnsEntry = DnsRepository.INSTANCE.getAddress(dnsQueryName);
         if (cachedDnsEntry != null) {
             cachedDnsEntry.setLastAccessTime(System.currentTimeMillis());
