@@ -218,6 +218,11 @@ public class TcpConnection implements Runnable {
         Log.d(TcpConnection.class.getName(),
                 ">>>>>>>> Begin to switch connection to CLOSE_WAIT, current connection: " +
                         this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
+        var ackNumberForFin = TcpConnection.this.getCurrentAcknowledgementNumber().get();
+        this.tcpIpPacketWriter.writeAckToDevice(null, TcpConnection.this,
+                TcpConnection.this.getCurrentSequenceNumber().get(),
+                ackNumberForFin,
+                this.findSenderTimestamp(deviceInboundTcpPacket.getHeader()));
         this.status.set(TcpConnectionStatus.CLOSE_WAIT);
         //Device maybe carry data together with Fin(ACK)
         this.relayDeviceData(deviceInboundTcpPacket);
@@ -227,7 +232,7 @@ public class TcpConnection implements Runnable {
             TcpConnection.this.getStatus().set(TcpConnectionStatus.LAST_ACK);
             this.tcpIpPacketWriter.writeFinAckToDevice(null, TcpConnection.this,
                     TcpConnection.this.getCurrentSequenceNumber().get(),
-                    TcpConnection.this.getCurrentAcknowledgementNumber().get());
+                    ackNumberForFin);
             Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                     "<<<<----  Connection switched to LAST_ACK, ack to device with [" +
                             ackNumberForCloseWait + "] current connection: " +
