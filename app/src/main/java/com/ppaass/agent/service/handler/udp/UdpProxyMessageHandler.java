@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacketBuilder;
 import com.ppaass.agent.protocol.message.*;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
+import com.ppaass.agent.protocol.message.payload.DomainResolveResponsePayload;
 import com.ppaass.agent.service.handler.IUdpIpPacketWriter;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
 import com.ppaass.agent.service.handler.dns.DnsRepository;
@@ -18,10 +20,9 @@ import io.netty.handler.codec.dns.*;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.util.Arrays;
 import java.util.Collections;
 
-public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
+public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<PpaassMessage> {
     private final ObjectMapper objectMapper;
     private final IUdpIpPacketWriter ipPacketWriter;
 
@@ -31,25 +32,25 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<Message>
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, Message proxyMessage)
+    protected void channelRead0(ChannelHandlerContext ctx, PpaassMessage proxyMessage)
             throws IOException {
         //Relay remote data to device and use mss as the transfer unit
-        ProxyMessagePayload proxyMessagePayload =
+        PpaassMessageProxyPayload proxyMessagePayload =
                 PpaassMessageUtil.INSTANCE.parseProxyMessagePayloadBytes(proxyMessage.getPayload());
-        if (ProxyMessagePayloadType.DomainResolveFail == proxyMessagePayload.getPayloadType()) {
+        if (PpaassMessageProxyPayloadType.DomainResolveFail == proxyMessagePayload.getPayloadType()) {
             return;
         }
-        if (ProxyMessagePayloadType.DomainResolveSuccess == proxyMessagePayload.getPayloadType()) {
-            DomainResolveResponse domainResolveResponse =
-                    this.objectMapper.readValue(proxyMessagePayload.getData(), DomainResolveResponse.class);
+        if (PpaassMessageProxyPayloadType.DomainResolveSuccess == proxyMessagePayload.getPayloadType()) {
+            DomainResolveResponsePayload domainResolveResponse =
+                    this.objectMapper.readValue(proxyMessagePayload.getData(), DomainResolveResponsePayload.class);
             Log.d(UdpProxyMessageHandler.class.getName(),
                     "<<<<----#### Domain resolve response: " + domainResolveResponse);
             domainResolveResponse.getAddresses().forEach(addressBytes -> {
                 DnsRepository.INSTANCE.saveAddresses(domainResolveResponse.getName(),
                         Collections.singletonList(addressBytes));
             });
-            NetAddress sourceNetAddress = proxyMessagePayload.getSourceAddress();
-            NetAddress targetNetAddress = proxyMessagePayload.getTargetAddress();
+            PpaassNetAddress sourceNetAddress = proxyMessagePayload.getSourceAddress();
+            PpaassNetAddress targetNetAddress = proxyMessagePayload.getTargetAddress();
             InetSocketAddress sourceAddress =
                     new InetSocketAddress(InetAddress.getByAddress(sourceNetAddress.getValue().getHost()),
                             sourceNetAddress.getValue().getPort());

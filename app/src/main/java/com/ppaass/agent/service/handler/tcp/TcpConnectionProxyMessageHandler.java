@@ -1,7 +1,16 @@
 package com.ppaass.agent.service.handler.tcp;
 
 import android.util.Log;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ppaass.agent.protocol.message.*;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddressIpValue;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddressType;
+import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryption;
+import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
+import com.ppaass.agent.protocol.message.payload.TcpLoopInitRequestPayload;
+import com.ppaass.agent.protocol.message.payload.TcpLoopInitResponsePayload;
+import com.ppaass.agent.protocol.message.payload.TcpLoopInitResponseType;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
@@ -15,14 +24,18 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.Promise;
 
-public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandler<Message> {
+import java.io.IOException;
+
+public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandler<PpaassMessage> {
     private final ITcpIpPacketWriter tcpIpPacketWriter;
     private final Promise<Channel> proxyChannelPromise;
+    private static final ObjectMapper OBJ_MAPPER = new ObjectMapper();
 
     public TcpConnectionProxyMessageHandler(ITcpIpPacketWriter tcpIpPacketWriter,
                                             Promise<Channel> proxyChannelPromise) {
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.proxyChannelPromise = proxyChannelPromise;
+
     }
 
     @Override
@@ -32,24 +45,29 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         Log.d(TcpConnectionProxyMessageHandler.class.getName(),
                 "---->>>> Tcp connection activated, begin to relay remote data to device, current connection:  " +
                         tcpConnection);
-        Message messageConnectToRemote = new Message();
+        PpaassMessage messageConnectToRemote = new PpaassMessage();
         messageConnectToRemote.setId(UUIDUtil.INSTANCE.generateUuid());
         messageConnectToRemote.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
         messageConnectToRemote.setPayloadEncryption(
-                new PayloadEncryption(PayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
-        AgentMessagePayload connectToRemoteMessagePayload = new AgentMessagePayload();
-        connectToRemoteMessagePayload.setPayloadType(AgentMessagePayloadType.TcpConnect);
-        NetAddress sourceAddress = new NetAddress(NetAddressType.IpV4, new NetAddressValue(
+                new PpaassMessagePayloadEncryption(PpaassMessagePayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
+        PpaassMessageAgentPayload connectToRemoteMessagePayload = new PpaassMessageAgentPayload();
+        connectToRemoteMessagePayload.setPayloadType(PpaassMessageAgentPayloadType.TcpLoopInit);
+
+        var tcpLoopInitRequest = new TcpLoopInitRequestPayload();
+
+
+        PpaassNetAddress sourceAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(
                 tcpConnection.getRepositoryKey().getSourceAddress(),
                 tcpConnection.getRepositoryKey().getSourcePort()
         ));
-        connectToRemoteMessagePayload.setSourceAddress(sourceAddress);
-        NetAddress targetAddress = new NetAddress(NetAddressType.IpV4, new NetAddressValue(
+        tcpLoopInitRequest.setSrcAddress(sourceAddress);
+        PpaassNetAddress targetAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(
                 tcpConnection.getRepositoryKey().getDestinationAddress(),
                 tcpConnection.getRepositoryKey().getDestinationPort()
         ));
-        connectToRemoteMessagePayload.setTargetAddress(targetAddress);
-        messageConnectToRemote.setPayload(
+        tcpLoopInitRequest.setDestAddress(targetAddress);
+        connectToRemoteMessagePayload.setData(OBJ_MAPPER.writeValueAsBytes(tcpLoopInitRequest));
+        messageConnectToRemote.setPayloadBytes(
                 PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
                         connectToRemoteMessagePayload));
         ctx.channel().writeAndFlush(messageConnectToRemote);
@@ -59,7 +77,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, Message proxyMessage) {
+    protected void channelRead0(ChannelHandlerContext ctx, PpaassMessage proxyMessage) throws IOException {
         AttributeKey<TcpConnection> tcpConnectionKey = AttributeKey.valueOf(IVpnConst.TCP_CONNECTION);
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         tcpConnection.setLatestActiveTime();
@@ -69,24 +87,32 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
             tcpInboundPacketTimestamp = tcpInboundPacketTimestampAttr.get();
         }
         //Relay remote data to device and use mss as the transfer unit
-        byte[] proxyMessagePayloadBytes = proxyMessage.getPayload();
-        ProxyMessagePayload proxyMessagePayload =
+        byte[] proxyMessagePayloadBytes = proxyMessage.getPayloadBytes();
+
+        PpaassMessageProxyPayload proxyMessagePayload =
                 PpaassMessageUtil.INSTANCE.parseProxyMessagePayloadBytes(proxyMessagePayloadBytes);
-        if (ProxyMessagePayloadType.TcpConnectSuccess == proxyMessagePayload.getPayloadType()) {
-            this.proxyChannelPromise.setSuccess(ctx.channel());
-            Log.d(TcpConnectionProxyMessageHandler.class.getName(),
-                    "<<<<---- Tcp connection connected to proxy already, current connection:  " +
-                            tcpConnection);
+        if (PpaassMessageProxyPayloadType.IdleHeartbeat == proxyMessagePayload.getPayloadType()) {
             return;
         }
-        if (ProxyMessagePayloadType.TcpConnectFail == proxyMessagePayload.getPayloadType()) {
+
+        if (PpaassMessageProxyPayloadType.TcpLoopInit == proxyMessagePayload.getPayloadType()) {
+            var tcpLoopInitResponsePayloadBytes = proxyMessagePayload.getData();
+            var tcpLoopInitResponsePayload = OBJ_MAPPER.readValue(tcpLoopInitResponsePayloadBytes, TcpLoopInitResponsePayload.class);
+            if (tcpLoopInitResponsePayload.getResponseType() == TcpLoopInitResponseType.Success) {
+                this.proxyChannelPromise.setSuccess(ctx.channel());
+                Log.d(TcpConnectionProxyMessageHandler.class.getName(),
+                        "<<<<---- Tcp connection connected to proxy already, current connection:  " +
+                                tcpConnection);
+                return;
+            }
             this.proxyChannelPromise.setFailure(new IllegalStateException("Proxy connect to remote fail"));
             Log.e(TcpConnectionProxyMessageHandler.class.getName(),
                     "<<<<---- Tcp connection fail connected to proxy already, current connection:  " +
                             tcpConnection);
             return;
         }
-        if (ProxyMessagePayloadType.TcpDataSuccess == proxyMessagePayload.getPayloadType()) {
+
+        if (PpaassMessageProxyPayloadType.TcpDataSuccess == proxyMessagePayload.getPayloadType()) {
             ByteBuf remoteDataBuf = Unpooled.wrappedBuffer(proxyMessagePayload.getData());
             while (remoteDataBuf.isReadable()) {
                 int mssDataLength = Math.min(IVpnConst.TCP_MSS, remoteDataBuf.readableBytes());
@@ -106,9 +132,7 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
             }
             return;
         }
-        if (ProxyMessagePayloadType.HeartbeatSuccess == proxyMessagePayload.getPayloadType()) {
-            return;
-        }
+
     }
 
     @Override

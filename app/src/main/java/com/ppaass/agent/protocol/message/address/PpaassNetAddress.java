@@ -1,33 +1,33 @@
-package com.ppaass.agent.protocol.message;
+package com.ppaass.agent.protocol.message.address;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-public class NetAddress {
-    private final NetAddressValue value;
-    private final NetAddressType type;
+public class PpaassNetAddress {
+    private final APpaassNetAddressValue value;
+    private final PpaassNetAddressType type;
 
     @JsonCreator
-    public NetAddress(
+    public PpaassNetAddress(
             @JsonProperty("type")
-            NetAddressType type,
+            PpaassNetAddressType type,
             @JsonProperty("value")
-            NetAddressValue value) {
+            APpaassNetAddressValue value) {
         this.value = value;
         this.type = type;
     }
 
-    public NetAddressValue getValue() {
+    public APpaassNetAddressValue getValue() {
         return value;
     }
 
-    public NetAddressType getType() {
+    public PpaassNetAddressType getType() {
         return type;
     }
 
     @Override
     public String toString() {
-        return "NetAddress{" +
+        return "PpaassNetAddress{" +
                 "type=" + type +
                 ", value=" + value +
                 '}';

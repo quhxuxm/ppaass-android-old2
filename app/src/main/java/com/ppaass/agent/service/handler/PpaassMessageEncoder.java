@@ -1,7 +1,7 @@
 package com.ppaass.agent.service.handler;
 
 import android.util.Log;
-import com.ppaass.agent.protocol.message.Message;
+import com.ppaass.agent.protocol.message.PpaassMessage;
 import com.ppaass.agent.service.IVpnConst;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
@@ -9,7 +9,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
 import net.jpountz.lz4.LZ4Factory;
 
-public class PpaassMessageEncoder extends MessageToByteEncoder<Message> {
+public class PpaassMessageEncoder extends MessageToByteEncoder<PpaassMessage> {
     private final boolean compress;
 
     public PpaassMessageEncoder(boolean compress) {
@@ -17,7 +17,7 @@ public class PpaassMessageEncoder extends MessageToByteEncoder<Message> {
     }
 
     @Override
-    protected void encode(ChannelHandlerContext ctx, Message msg, ByteBuf out) throws Exception {
+    protected void encode(ChannelHandlerContext ctx, PpaassMessage msg, ByteBuf out) throws Exception {
         out.writeBytes(IVpnConst.PPAASS_PROTOCOL_FLAG.getBytes());
         out.writeBoolean(this.compress);
         //Message body

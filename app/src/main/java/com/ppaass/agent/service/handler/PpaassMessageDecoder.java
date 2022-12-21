@@ -1,7 +1,6 @@
 package com.ppaass.agent.service.handler;
 
 import android.util.Log;
-import com.ppaass.agent.protocol.message.Message;
 import com.ppaass.agent.service.IVpnConst;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;

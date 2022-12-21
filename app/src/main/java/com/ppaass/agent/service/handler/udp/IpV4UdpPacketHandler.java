@@ -8,6 +8,12 @@ import com.ppaass.agent.protocol.general.ip.*;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacketBuilder;
 import com.ppaass.agent.protocol.message.*;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddressIpValue;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddressType;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
+import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
+import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryption;
+import com.ppaass.agent.protocol.message.payload.DomainResolveRequestPayload;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.PpaassVpnNettyTcpChannelFactory;
 import com.ppaass.agent.service.handler.IUdpIpPacketWriter;
@@ -161,27 +167,25 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             return;
         }
         try {
-            NetAddress sourceAddress = new NetAddress(NetAddressType.IpV4, new NetAddressValue(
+            PpaassNetAddress sourceAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(
                     ipV4Header.getSourceAddress(), udpPacket.getHeader().getSourcePort()
             ));
-            NetAddress targetAddress = new NetAddress(NetAddressType.IpV4, new NetAddressValue(
+            PpaassNetAddress targetAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(
                     ipV4Header.getDestinationAddress(), udpPacket.getHeader().getDestinationPort()
             ));
-            Message domainResolveMessage = new Message();
+            PpaassMessage domainResolveMessage = new PpaassMessage();
             domainResolveMessage.setId(UUIDUtil.INSTANCE.generateUuid());
             domainResolveMessage.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
             domainResolveMessage.setPayloadEncryption(
-                    new PayloadEncryption(PayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
-            AgentMessagePayload domainResolveMessagePayload = new AgentMessagePayload();
-            domainResolveMessagePayload.setSourceAddress(sourceAddress);
-            domainResolveMessagePayload.setTargetAddress(targetAddress);
-            domainResolveMessagePayload.setPayloadType(AgentMessagePayloadType.DomainResolve);
-            DomainResolveRequest domainResolveRequest = new DomainResolveRequest();
-            domainResolveRequest.setName(dnsQueryName);
-            domainResolveRequest.setId(dnsQueryId);
+                    new PpaassMessagePayloadEncryption(PpaassMessagePayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
+            PpaassMessageAgentPayload domainResolveMessagePayload = new PpaassMessageAgentPayload();
+            domainResolveMessagePayload.setPayloadType(PpaassMessageAgentPayloadType.DomainNameResolve);
+            DomainResolveRequestPayload domainResolveRequest = new DomainResolveRequestPayload();
+            domainResolveRequest.setDomainName(dnsQueryName);
+            domainResolveRequest.setRequestId(dnsQueryId);
             byte[] domainResolveRequestBytes = this.objectMapper.writeValueAsBytes(domainResolveRequest);
             domainResolveMessagePayload.setData(domainResolveRequestBytes);
-            domainResolveMessage.setPayload(
+            domainResolveMessage.setPayloadBytes(
                     PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(domainResolveMessagePayload));
             if (this.proxyChannel == null || !this.proxyChannel.isActive()) {
                 this.proxyChannel = this.initializeProxyChannel();

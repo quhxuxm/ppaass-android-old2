@@ -7,6 +7,11 @@ import com.ppaass.agent.protocol.general.tcp.TcpHeader;
 import com.ppaass.agent.protocol.general.tcp.TcpHeaderOption;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
 import com.ppaass.agent.protocol.message.*;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddressIpValue;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddressType;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
+import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
+import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryption;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.PpaassVpnNettyTcpChannelFactory;
 import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
@@ -265,25 +270,12 @@ public class TcpConnection implements Runnable {
         Log.d(TcpConnection.class.getName(),
                 ">>>>>>>> Begin to relay device inbound data to proxy, current connection: " +
                         this + "; device inbound tcp packet: " + deviceInboundTcpPacket);
-        var messageRelayToProxy = new Message();
+        var messageRelayToProxy = new PpaassMessage();
         messageRelayToProxy.setId(UUIDUtil.INSTANCE.generateUuid());
         messageRelayToProxy.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
         messageRelayToProxy.setPayloadEncryption(
-                new PayloadEncryption(PayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
-        var agentMessagePayload = new AgentMessagePayload();
-        agentMessagePayload.setData(deviceInboundTcpPacket.getData());
-        agentMessagePayload.setPayloadType(AgentMessagePayloadType.TcpData);
-        var sourceAddress =
-                new NetAddress(NetAddressType.IpV4, new NetAddressValue(this.repositoryKey.getSourceAddress(),
-                        this.repositoryKey.getSourcePort()));
-        agentMessagePayload.setSourceAddress(sourceAddress);
-        var targetAddress =
-                new NetAddress(NetAddressType.IpV4, new NetAddressValue(this.repositoryKey.getDestinationAddress(),
-                        this.repositoryKey.getDestinationPort()));
-        agentMessagePayload.setTargetAddress(targetAddress);
-        messageRelayToProxy.setPayload(
-                PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(
-                        agentMessagePayload));
+                new PpaassMessagePayloadEncryption(PpaassMessagePayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
+        messageRelayToProxy.setPayloadBytes(deviceInboundTcpPacket.getData());
         TcpConnection.this.currentAcknowledgementNumber.addAndGet(
                 deviceInboundTcpPacket.getData().length);
         var senderTimestamp = this.findSenderTimestamp(deviceInboundTcpPacket.getHeader());

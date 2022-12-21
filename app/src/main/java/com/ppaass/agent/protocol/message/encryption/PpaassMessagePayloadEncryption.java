@@ -1,16 +1,16 @@
-package com.ppaass.agent.protocol.message;
+package com.ppaass.agent.protocol.message.encryption;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-public class PayloadEncryption {
+public class PpaassMessagePayloadEncryption {
     private byte[] token;
-    private PayloadEncryptionType type;
+    private PpaassMessagePayloadEncryptionType type;
 
     @JsonCreator
-    public PayloadEncryption(
+    public PpaassMessagePayloadEncryption(
             @JsonProperty("type")
-            PayloadEncryptionType type,
+            PpaassMessagePayloadEncryptionType type,
             @JsonProperty("token")
             byte[] token) {
         this.token = token;
@@ -25,11 +25,11 @@ public class PayloadEncryption {
         this.token = token;
     }
 
-    public PayloadEncryptionType getType() {
+    public PpaassMessagePayloadEncryptionType getType() {
         return type;
     }
 
-    public void setType(PayloadEncryptionType type) {
+    public void setType(PpaassMessagePayloadEncryptionType type) {
         this.type = type;
     }
 }
