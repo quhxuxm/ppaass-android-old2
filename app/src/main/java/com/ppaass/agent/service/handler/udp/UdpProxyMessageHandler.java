@@ -38,7 +38,7 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<PpaassMe
         //Relay remote data to device and use mss as the transfer unit
         PpaassMessageProxyPayload proxyMessagePayload = PpaassMessageUtil.INSTANCE.convertBytesToProxyMessagePayload(proxyMessage.getPayloadBytes());
         if (PpaassMessageProxyPayloadType.DomainNameResolve == proxyMessagePayload.getPayloadType()) {
-            var domainResolveResponse = PpaassMessageUtil.INSTANCE.parseDomainNameResolveResponseMessage(proxyMessage.getPayloadBytes());
+            var domainResolveResponse = PpaassMessageUtil.INSTANCE.parseDomainNameResolveResponseMessage(proxyMessagePayload.getData());
             if (domainResolveResponse.getResponseType() == DomainResolveResponseType.Success) {
                 Log.d(UdpProxyMessageHandler.class.getName(), "<<<<----#### Domain resolve response: " + domainResolveResponse);
                 domainResolveResponse.getResolvedIpAddresses().forEach(addressBytes -> {
@@ -50,7 +50,7 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<PpaassMe
 
                 InetSocketAddress srcInetAddress = new InetSocketAddress(InetAddress.getByAddress(((PpaassNetAddressIpValue) srcAddress.getValue()).getIp()), srcAddress.getValue().getPort());
                 InetSocketAddress destInetAddress = new InetSocketAddress(InetAddress.getByAddress(((PpaassNetAddressIpValue) destAddress.getValue()).getIp()), destAddress.getValue().getPort());
-                DatagramDnsResponse dnsResponse = new DatagramDnsResponse(srcInetAddress, destInetAddress, domainResolveResponse.getRequestId());
+                DatagramDnsResponse dnsResponse = new DatagramDnsResponse(srcInetAddress, destInetAddress, Integer.parseInt(domainResolveResponse.getRequestId()));
                 DefaultDnsQuestion dnsQuestion = new DefaultDnsQuestion(domainResolveResponse.getDomainName(), DnsRecordType.A);
                 dnsResponse.addRecord(DnsSection.QUESTION, dnsQuestion);
                 domainResolveResponse.getResolvedIpAddresses().forEach(addressBytes -> {

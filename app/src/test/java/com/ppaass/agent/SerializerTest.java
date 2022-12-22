@@ -18,7 +18,7 @@ public class SerializerTest {
     @Test
     public void testDomainResolveResponse() throws JsonProcessingException {
         var domainResolveResponse = new DomainResolveResponsePayload();
-        domainResolveResponse.setRequestId(65534);
+        domainResolveResponse.setRequestId("65534");
         domainResolveResponse.setDomainName("www.baidu.com");
         domainResolveResponse.setResolvedIpAddresses(Arrays.asList(new byte[]{
                 (byte) 192, (byte) 168, 31, (byte) 200

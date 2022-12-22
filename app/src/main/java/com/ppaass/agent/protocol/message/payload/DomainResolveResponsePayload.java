@@ -5,7 +5,7 @@ import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
 import java.util.List;
 
 public class DomainResolveResponsePayload {
-    private int requestId;
+    private String requestId;
     private String domainName;
     private List<byte[]> resolvedIpAddresses;
     private DomainResolveResponseType responseType;
@@ -28,11 +28,11 @@ public class DomainResolveResponsePayload {
         this.destAddress = destAddress;
     }
 
-    public int getRequestId() {
+    public String getRequestId() {
         return requestId;
     }
 
-    public void setRequestId(int requestId) {
+    public void setRequestId(String requestId) {
         this.requestId = requestId;
     }
 

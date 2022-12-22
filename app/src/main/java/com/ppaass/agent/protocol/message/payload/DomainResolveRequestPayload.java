@@ -4,7 +4,7 @@ import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
 
 public class DomainResolveRequestPayload {
     private String domainName;
-    private int requestId;
+    private String requestId;
     private PpaassNetAddress srcAddress;
     private PpaassNetAddress destAddress;
 
@@ -16,11 +16,11 @@ public class DomainResolveRequestPayload {
         this.domainName = domainName;
     }
 
-    public int getRequestId() {
+    public String getRequestId() {
         return requestId;
     }
 
-    public void setRequestId(int requestId) {
+    public void setRequestId(String requestId) {
         this.requestId = requestId;
     }
 

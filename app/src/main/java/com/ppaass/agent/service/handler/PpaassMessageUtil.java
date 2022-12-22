@@ -201,11 +201,11 @@ public class PpaassMessageUtil {
     public PpaassMessage generateDomainNameResolveRequestMessage(String domainName, int requestId, PpaassNetAddress srcAddress, PpaassNetAddress destAddress, String userToken, PpaassMessagePayloadEncryption payloadEncryption) {
         var domainNameResolveRequestPayload = new DomainResolveRequestPayload();
         domainNameResolveRequestPayload.setDomainName(domainName);
-        domainNameResolveRequestPayload.setRequestId(requestId);
+        domainNameResolveRequestPayload.setRequestId(Integer.toString(requestId));
         domainNameResolveRequestPayload.setSrcAddress(srcAddress);
         domainNameResolveRequestPayload.setDestAddress(destAddress);
         var ppaassMessagePayload = new PpaassMessageAgentPayload();
-        ppaassMessagePayload.setPayloadType(PpaassMessageAgentPayloadType.IdleHeartbeat);
+        ppaassMessagePayload.setPayloadType(PpaassMessageAgentPayloadType.DomainNameResolve);
         try {
             ppaassMessagePayload.setData(OBJECT_MAPPER.writeValueAsBytes(domainNameResolveRequestPayload));
         } catch (JsonProcessingException e) {
