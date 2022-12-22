@@ -21,7 +21,7 @@ public class PpaassMessageEncoder extends MessageToByteEncoder<PpaassMessage> {
         out.writeBytes(IVpnConst.PPAASS_PROTOCOL_FLAG.getBytes());
         out.writeBoolean(this.compress);
         //Message body
-        var messageBytes = PpaassMessageUtil.INSTANCE.generateMessageBytes(msg);
+        var messageBytes = PpaassMessageUtil.INSTANCE.convertPpaassMessageToBytes(msg);
         if (compress) {
             var lz4Compressor = LZ4Factory.fastestInstance().fastCompressor();
             var compressedBodyBytes = lz4Compressor.compress(messageBytes);

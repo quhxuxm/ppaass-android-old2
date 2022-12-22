@@ -1,7 +1,7 @@
 package com.ppaass.agent.protocol.message.payload;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
+
 import java.util.List;
 
 public class DomainResolveResponsePayload {
@@ -9,6 +9,24 @@ public class DomainResolveResponsePayload {
     private String domainName;
     private List<byte[]> resolvedIpAddresses;
     private DomainResolveResponseType responseType;
+    private PpaassNetAddress srcAddress;
+    private PpaassNetAddress destAddress;
+
+    public PpaassNetAddress getSrcAddress() {
+        return srcAddress;
+    }
+
+    public void setSrcAddress(PpaassNetAddress srcAddress) {
+        this.srcAddress = srcAddress;
+    }
+
+    public PpaassNetAddress getDestAddress() {
+        return destAddress;
+    }
+
+    public void setDestAddress(PpaassNetAddress destAddress) {
+        this.destAddress = destAddress;
+    }
 
     public int getRequestId() {
         return requestId;

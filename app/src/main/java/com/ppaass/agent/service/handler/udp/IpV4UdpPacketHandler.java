@@ -3,17 +3,15 @@ package com.ppaass.agent.service.handler.udp;
 import android.net.VpnService;
 import android.util.Log;
 import androidx.annotation.NonNull;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ppaass.agent.protocol.general.ip.*;
 import com.ppaass.agent.protocol.general.udp.UdpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacketBuilder;
-import com.ppaass.agent.protocol.message.*;
+import com.ppaass.agent.protocol.message.PpaassMessage;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
 import com.ppaass.agent.protocol.message.address.PpaassNetAddressIpValue;
 import com.ppaass.agent.protocol.message.address.PpaassNetAddressType;
-import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
-import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
 import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryption;
-import com.ppaass.agent.protocol.message.payload.DomainResolveRequestPayload;
+import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.PpaassVpnNettyTcpChannelFactory;
 import com.ppaass.agent.service.handler.IUdpIpPacketWriter;
@@ -46,13 +44,13 @@ import java.nio.ByteBuffer;
 public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     private final FileOutputStream rawDeviceOutputStream;
     private final VpnService vpnService;
-    private final ObjectMapper objectMapper;
+
     private Channel proxyChannel;
 
     public IpV4UdpPacketHandler(FileOutputStream rawDeviceOutputStream, VpnService vpnService) throws Exception {
         this.rawDeviceOutputStream = rawDeviceOutputStream;
         this.vpnService = vpnService;
-        this.objectMapper = new ObjectMapper();
+
         try {
             this.proxyChannel = this.initializeProxyChannel();
         } catch (Exception e) {
@@ -85,14 +83,9 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
 
     private DatagramDnsQuery parseDnsQuery(UdpPacket udpPacket, IpV4Header ipHeader) {
         try {
-            InetSocketAddress udpDestAddress =
-                    new InetSocketAddress(InetAddress.getByAddress(ipHeader.getDestinationAddress()),
-                            udpPacket.getHeader().getDestinationPort());
-            InetSocketAddress udpSourceAddress =
-                    new InetSocketAddress(InetAddress.getByAddress(ipHeader.getSourceAddress()),
-                            udpPacket.getHeader().getSourcePort());
-            DatagramPacket dnsPacket =
-                    new DatagramPacket(Unpooled.wrappedBuffer(udpPacket.getData()), udpDestAddress, udpSourceAddress);
+            InetSocketAddress udpDestAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getDestinationAddress()), udpPacket.getHeader().getDestinationPort());
+            InetSocketAddress udpSourceAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getSourceAddress()), udpPacket.getHeader().getSourcePort());
+            DatagramPacket dnsPacket = new DatagramPacket(Unpooled.wrappedBuffer(udpPacket.getData()), udpDestAddress, udpSourceAddress);
             EmbeddedChannel parseDnsQueryChannel = new EmbeddedChannel();
             parseDnsQueryChannel.pipeline().addLast(new DatagramDnsQueryDecoder());
             parseDnsQueryChannel.writeInbound(dnsPacket);
@@ -100,8 +93,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query: " + dnsQuery);
             return dnsQuery;
         } catch (Exception e) {
-            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when logging DNS Query, data:\n" +
-                    ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n.", e);
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when logging DNS Query, data:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n.", e);
             return null;
         }
     }
@@ -109,16 +101,12 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     public void handle(UdpPacket udpPacket, IpV4Header ipV4Header) throws Exception {
         DatagramDnsQuery dnsQuery = this.parseDnsQuery(udpPacket, ipV4Header);
         if (dnsQuery == null) {
-            Log.e(IpV4UdpPacketHandler.class.getName(),
-                    "---->>>> Ignore udp packet because of invalid dns query: " + udpPacket + ", ip header: " +
-                            ipV4Header);
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Ignore udp packet because of invalid dns query: " + udpPacket + ", ip header: " + ipV4Header);
             return;
         }
         DefaultDnsQuestion dnsQuestion = dnsQuery.recordAt(DnsSection.QUESTION);
         if (dnsQuestion == null) {
-            Log.e(IpV4UdpPacketHandler.class.getName(),
-                    "---->>>> Ignore udp packet because of no dns question: " + udpPacket + ", ip header: " +
-                            ipV4Header);
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Ignore udp packet because of no dns question: " + udpPacket + ", ip header: " + ipV4Header);
             return;
         }
         int dnsQueryId = dnsQuery.id();
@@ -132,21 +120,15 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         DnsEntry cachedDnsEntry = DnsRepository.INSTANCE.getAddress(dnsQueryName);
         if (cachedDnsEntry != null) {
             cachedDnsEntry.setLastAccessTime(System.currentTimeMillis());
-            InetSocketAddress sourceAddress =
-                    new InetSocketAddress(InetAddress.getByAddress(ipV4Header.getSourceAddress()),
-                            udpPacket.getHeader().getSourcePort());
-            InetSocketAddress targetAddress =
-                    new InetSocketAddress(InetAddress.getByAddress(ipV4Header.getDestinationAddress()),
-                            udpPacket.getHeader().getDestinationPort());
+            InetSocketAddress sourceAddress = new InetSocketAddress(InetAddress.getByAddress(ipV4Header.getSourceAddress()), udpPacket.getHeader().getSourcePort());
+            InetSocketAddress targetAddress = new InetSocketAddress(InetAddress.getByAddress(ipV4Header.getDestinationAddress()), udpPacket.getHeader().getDestinationPort());
             DatagramDnsResponse cachedDnsResponse = new DatagramDnsResponse(sourceAddress, targetAddress, dnsQueryId);
             cachedDnsResponse.addRecord(DnsSection.QUESTION, dnsQuestion);
             cachedDnsEntry.getAddresses().forEach(inetAddress -> {
-                DefaultDnsRawRecord answerRecord =
-                        new DefaultDnsRawRecord(dnsQueryName, DnsRecordType.A, 120,
-                                Unpooled.wrappedBuffer(inetAddress));
+                DefaultDnsRawRecord answerRecord = new DefaultDnsRawRecord(dnsQueryName, DnsRecordType.A, 120, Unpooled.wrappedBuffer(inetAddress));
                 cachedDnsResponse.addRecord(DnsSection.ANSWER, answerRecord);
             });
-            EmbeddedChannel generateDnsResponseBytesChannel = new EmbeddedChannel();
+            var generateDnsResponseBytesChannel = new EmbeddedChannel();
             generateDnsResponseBytesChannel.pipeline().addLast(new DatagramDnsResponseEncoder());
             generateDnsResponseBytesChannel.writeOutbound(cachedDnsResponse);
             DatagramPacket dnsResponseUdpPacket = generateDnsResponseBytesChannel.readOutbound();
@@ -157,9 +139,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             remoteToDeviceUdpPacketBuilder.sourcePort(udpPacket.getHeader().getDestinationPort());
             UdpPacket remoteToDeviceUdpPacket = remoteToDeviceUdpPacketBuilder.build();
             try {
-                this.writeToDevice(udpIpPacketId, remoteToDeviceUdpPacket,
-                        ipV4Header.getDestinationAddress(),
-                        ipV4Header.getSourceAddress(), 0);
+                this.writeToDevice(udpIpPacketId, remoteToDeviceUdpPacket, ipV4Header.getDestinationAddress(), ipV4Header.getSourceAddress(), 0);
             } catch (IOException e) {
                 Log.e(IpV4UdpPacketHandler.class.getName(), "Ip v4 udp handler have exception.", e);
             }
@@ -167,32 +147,16 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             return;
         }
         try {
-            PpaassNetAddress sourceAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(
-                    ipV4Header.getSourceAddress(), udpPacket.getHeader().getSourcePort()
-            ));
-            PpaassNetAddress targetAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(
-                    ipV4Header.getDestinationAddress(), udpPacket.getHeader().getDestinationPort()
-            ));
-            PpaassMessage domainResolveMessage = new PpaassMessage();
-            domainResolveMessage.setId(UUIDUtil.INSTANCE.generateUuid());
-            domainResolveMessage.setUserToken(IVpnConst.PPAASS_PROXY_USER_TOKEN);
-            domainResolveMessage.setPayloadEncryption(
-                    new PpaassMessagePayloadEncryption(PpaassMessagePayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
-            PpaassMessageAgentPayload domainResolveMessagePayload = new PpaassMessageAgentPayload();
-            domainResolveMessagePayload.setPayloadType(PpaassMessageAgentPayloadType.DomainNameResolve);
-            DomainResolveRequestPayload domainResolveRequest = new DomainResolveRequestPayload();
-            domainResolveRequest.setDomainName(dnsQueryName);
-            domainResolveRequest.setRequestId(dnsQueryId);
-            byte[] domainResolveRequestBytes = this.objectMapper.writeValueAsBytes(domainResolveRequest);
-            domainResolveMessagePayload.setData(domainResolveRequestBytes);
-            domainResolveMessage.setPayloadBytes(
-                    PpaassMessageUtil.INSTANCE.generateAgentMessagePayloadBytes(domainResolveMessagePayload));
+            PpaassNetAddress srcAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(ipV4Header.getSourceAddress(), udpPacket.getHeader().getSourcePort()));
+            PpaassNetAddress destAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(ipV4Header.getDestinationAddress(), udpPacket.getHeader().getDestinationPort()));
+            PpaassMessage domainResolveMessage = PpaassMessageUtil.INSTANCE.generateDomainNameResolveRequestMessage(dnsQueryName, dnsQueryId, srcAddress, destAddress,
+
+                    IVpnConst.PPAASS_PROXY_USER_TOKEN, new PpaassMessagePayloadEncryption(PpaassMessagePayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
             if (this.proxyChannel == null || !this.proxyChannel.isActive()) {
                 this.proxyChannel = this.initializeProxyChannel();
             }
             this.proxyChannel.writeAndFlush(domainResolveMessage);
-            Log.d(IpV4UdpPacketHandler.class.getName(),
-                    "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
+            Log.d(IpV4UdpPacketHandler.class.getName(), "---->>>> Send udp packet to remote: " + udpPacket + ", ip header: " + ipV4Header);
         } catch (Exception e) {
             Log.e(IpV4UdpPacketHandler.class.getName(), "Ip v4 udp handler have exception.", e);
             if (this.proxyChannel != null) {
@@ -202,8 +166,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     }
 
     @Override
-    public void writeToDevice(short udpIpPacketId, UdpPacket udpPacket, byte[] sourceHost, byte[] destinationHost,
-                              int udpResponseDataOffset) throws IOException {
+    public void writeToDevice(short udpIpPacketId, UdpPacket udpPacket, byte[] sourceHost, byte[] destinationHost, int udpResponseDataOffset) throws IOException {
         IpPacketBuilder ipPacketBuilder = new IpPacketBuilder();
         ipPacketBuilder.data(udpPacket);
         IpV4HeaderBuilder ipV4HeaderBuilder = new IpV4HeaderBuilder();

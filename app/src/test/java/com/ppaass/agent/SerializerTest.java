@@ -18,9 +18,9 @@ public class SerializerTest {
     @Test
     public void testDomainResolveResponse() throws JsonProcessingException {
         var domainResolveResponse = new DomainResolveResponsePayload();
-        domainResolveResponse.setId(65534);
-        domainResolveResponse.setName("www.baidu.com");
-        domainResolveResponse.setAddresses(Arrays.asList(new byte[]{
+        domainResolveResponse.setRequestId(65534);
+        domainResolveResponse.setDomainName("www.baidu.com");
+        domainResolveResponse.setResolvedIpAddresses(Arrays.asList(new byte[]{
                 (byte) 192, (byte) 168, 31, (byte) 200
         }, new byte[]{
                 (byte) 192, (byte) 168, 31, (byte) 201
@@ -35,11 +35,9 @@ public class SerializerTest {
     public void testMessage() throws JsonProcessingException {
         var message = new PpaassMessage();
         message.setId(UUIDUtil.INSTANCE.generateUuid());
-        message.setConnectionId(UUIDUtil.INSTANCE.generateUuid());
-        message.setRefId(UUIDUtil.INSTANCE.generateUuid());
         message.setPayloadEncryption(
                 new PpaassMessagePayloadEncryption(PpaassMessagePayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
-        message.setPayload(UUIDUtil.INSTANCE.generateUuidInBytes());
+        message.setPayloadBytes(UUIDUtil.INSTANCE.generateUuidInBytes());
         ObjectMapper objectMapper = new ObjectMapper();
         System.out.println(objectMapper.writeValueAsString(message));
     }
@@ -47,15 +45,7 @@ public class SerializerTest {
     @Test
     public void testAgentMessagePayload() throws JsonProcessingException {
         var agentMessagePayload = new PpaassMessageAgentPayload();
-        agentMessagePayload.setPayloadType(PpaassMessageAgentPayloadType.TcpConnect);
-        agentMessagePayload.setSourceAddress(
-                new PpaassNetAddress(PpaassNetAddressType.IpV4,
-                        new PpaassNetAddressIpValue(new byte[]{(byte) 192, (byte) 168, 31, (byte) 200
-                        }, 9097)));
-        agentMessagePayload.setTargetAddress(
-                new PpaassNetAddress(PpaassNetAddressType.IpV4,
-                        new PpaassNetAddressIpValue(new byte[]{(byte) 192, (byte) 168, 31, (byte) 200
-                        }, 9097)));
+        agentMessagePayload.setPayloadType(PpaassMessageAgentPayloadType.TcpLoopInit);
         agentMessagePayload.setData("hello".getBytes());
         ObjectMapper objectMapper = new ObjectMapper();
         System.out.println(objectMapper.writeValueAsString(agentMessagePayload));

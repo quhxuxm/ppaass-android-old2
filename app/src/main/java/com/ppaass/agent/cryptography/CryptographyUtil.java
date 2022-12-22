@@ -22,7 +22,9 @@ public class CryptographyUtil {
     private static final String ALGORITHM_RSA = "RSA";
     private static final String RSA_CHIPHER = "RSA/ECB/PKCS1Padding";
     private static final String ALGORITHM_AES = "AES";
+    private static final String ALGORITHM_BLOWFISH = "Blowfish";
     private static final String AES_CIPHER = "AES/ECB/PKCS5Padding";
+    private static final String BLOWFISH_CIPHER = "Blowfish/ECB/PKCS5Padding";
     public static final CryptographyUtil INSTANCE = new CryptographyUtil();
     private PublicKey publicKey;
     private PrivateKey privateKey;
@@ -49,9 +51,9 @@ public class CryptographyUtil {
             KeyFactory rsaDecryptionCipherKeyFactory = KeyFactory.getInstance(ALGORITHM_RSA);
             this.privateKey = rsaDecryptionCipherKeyFactory.generatePrivate(privateKeySpec);
         } catch (Exception e) {
-//            Log.e(CryptographyUtil.class.getName(),
-//                    "Fail to init cryptography util because of exception.",
-//                    e);
+            Log.e(CryptographyUtil.class.getName(),
+                    "Fail to init cryptography util because of exception.",
+                    e);
             throw new IllegalStateException(e);
         }
     }
@@ -61,7 +63,7 @@ public class CryptographyUtil {
      *
      * @param encryptionToken Encryption token.
      * @param data            The data to do encryption.
-     * @return The encrypt result
+     * @return The encryption result
      */
     public byte[] aesEncrypt(byte[] encryptionToken, byte[] data) {
         try {
@@ -70,10 +72,10 @@ public class CryptographyUtil {
             cipher.init(Cipher.ENCRYPT_MODE, key);
             return cipher.doFinal(data);
         } catch (Exception e) {
-//            Log.e(CryptographyUtil.class.getName(),
-//                    "Fail to encrypt data with encryption token in AES because of exception. Encryption token: \n" +
-//                            ByteBufUtil
-//                                    .prettyHexDump(Unpooled.wrappedBuffer(encryptionToken)) + "\n", e);
+            Log.e(CryptographyUtil.class.getName(),
+                    "Fail to encrypt data with encryption token in AES because of exception. Encryption token: \n" +
+                            ByteBufUtil
+                                    .prettyHexDump(Unpooled.wrappedBuffer(encryptionToken)) + "\n", e);
             throw new IllegalStateException(
                     "Fail to encrypt data with encryption token in AES because of exception.",
                     e);
@@ -94,11 +96,60 @@ public class CryptographyUtil {
             cipher.init(Cipher.DECRYPT_MODE, key);
             return cipher.doFinal(aesData);
         } catch (Exception e) {
-//            Log.e(CryptographyUtil.class.getName(),
-//                    "Fail to decrypt data with encryption token in AES because of exception. Encryption token: \n" +
-//                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(encryptionToken)) + "\n");
+            Log.e(CryptographyUtil.class.getName(),
+                    "Fail to decrypt data with encryption token in AES because of exception. Encryption token: \n" +
+                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(encryptionToken)) + "\n");
             throw new IllegalStateException(
                     "Fail to decrypt data with encryption token in AES because of exception.",
+                    e);
+        }
+    }
+
+
+
+    /**
+     * Do Blowfish encryption with encryption token.
+     *
+     * @param encryptionToken Encryption token.
+     * @param data            The data to do encryption.
+     * @return The encryption result
+     */
+    public byte[] blowfishEncrypt(byte[] encryptionToken, byte[] data) {
+        try {
+            SecretKeySpec key = new SecretKeySpec(encryptionToken, ALGORITHM_BLOWFISH);
+            Cipher cipher = Cipher.getInstance(BLOWFISH_CIPHER);
+            cipher.init(Cipher.ENCRYPT_MODE, key);
+            return cipher.doFinal(data);
+        } catch (Exception e) {
+            Log.e(CryptographyUtil.class.getName(),
+                    "Fail to encrypt data with encryption token in Blowfish because of exception. Encryption token: \n" +
+                            ByteBufUtil
+                                    .prettyHexDump(Unpooled.wrappedBuffer(encryptionToken)) + "\n", e);
+            throw new IllegalStateException(
+                    "Fail to encrypt data with encryption token in Blowfish because of exception.",
+                    e);
+        }
+    }
+
+    /**
+     * Decrypt Blowfish data with encryption token.
+     *
+     * @param encryptionToken Encryption token.
+     * @param aesData         The data encrypted.
+     * @return The original data
+     */
+    public byte[] blowfishDecrypt(byte[] encryptionToken, byte[] aesData) {
+        try {
+            SecretKeySpec key = new SecretKeySpec(encryptionToken, ALGORITHM_BLOWFISH);
+            Cipher cipher = Cipher.getInstance(BLOWFISH_CIPHER);
+            cipher.init(Cipher.DECRYPT_MODE, key);
+            return cipher.doFinal(aesData);
+        } catch (Exception e) {
+            Log.e(CryptographyUtil.class.getName(),
+                    "Fail to decrypt data with encryption token in Blowfish because of exception. Encryption token: \n" +
+                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(encryptionToken)) + "\n");
+            throw new IllegalStateException(
+                    "Fail to decrypt data with encryption token in Blowfish because of exception.",
                     e);
         }
     }
@@ -107,7 +158,7 @@ public class CryptographyUtil {
      * Do RSA encryption with public key.
      *
      * @param target Target data to do encrypt.
-     * @return The encrypt result
+     * @return The encryption result
      */
     public byte[] rsaEncrypt(byte[] target) {
         try {
@@ -116,9 +167,9 @@ public class CryptographyUtil {
             rsaEncryptionCipher.update(target);
             return rsaEncryptionCipher.doFinal();
         } catch (Exception e) {
-//            Log.e(CryptographyUtil.class.getName(),
-//                    "Fail to encrypt data with rsa public key because of exception. Target data: \n" +
-//                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(target)) + "\n", e);
+            Log.e(CryptographyUtil.class.getName(),
+                    "Fail to encrypt data with rsa public key because of exception. Target data: \n" +
+                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(target)) + "\n", e);
             throw new IllegalStateException("Fail to encrypt data with rsa public key because of exception.", e);
         }
     }
@@ -136,9 +187,9 @@ public class CryptographyUtil {
             rsaDecryptionCipher.update(target);
             return rsaDecryptionCipher.doFinal();
         } catch (Exception e) {
-//            Log.e(CryptographyUtil.class.getName(),
-//                    "Fail to decrypt data with rsa private key because of exception. Target data:\n" +
-//                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(target)) + "\n", e);
+            Log.e(CryptographyUtil.class.getName(),
+                    "Fail to decrypt data with rsa private key because of exception. Target data:\n" +
+                            ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(target)) + "\n", e);
             throw new IllegalStateException("Fail to decrypt data with rsa private key because of exception.", e);
         }
     }

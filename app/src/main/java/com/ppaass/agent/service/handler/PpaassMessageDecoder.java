@@ -56,7 +56,7 @@ public class PpaassMessageDecoder extends ByteToMessageDecoder {
                     lz4Decompressor.decompress(compressedBodyBytes, 0, bodyLength, bodyLength);
             bodyBuf = Unpooled.wrappedBuffer(decompressBodyBytes);
         }
-        var result = PpaassMessageUtil.INSTANCE.parseMessageBytes(bodyBuf);
+        var result = PpaassMessageUtil.INSTANCE.convertBytesToPpaassMessage(bodyBuf);
         this.readHeader = true;
         this.compressed = false;
         this.bodyLength = 0;
