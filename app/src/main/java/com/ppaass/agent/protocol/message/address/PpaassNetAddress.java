@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class PpaassNetAddress {
-    private final APpaassNetAddressValue value;
+    private final PpaassNetAddressValue value;
     private final PpaassNetAddressType type;
 
     @JsonCreator
@@ -12,12 +12,12 @@ public class PpaassNetAddress {
             @JsonProperty("type")
             PpaassNetAddressType type,
             @JsonProperty("value")
-            APpaassNetAddressValue value) {
+            PpaassNetAddressValue value) {
         this.value = value;
         this.type = type;
     }
 
-    public APpaassNetAddressValue getValue() {
+    public PpaassNetAddressValue getValue() {
         return value;
     }
 
@@ -25,11 +25,5 @@ public class PpaassNetAddress {
         return type;
     }
 
-    @Override
-    public String toString() {
-        return "PpaassNetAddress{" +
-                "type=" + type +
-                ", value=" + value +
-                '}';
-    }
+
 }

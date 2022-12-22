@@ -5,8 +5,8 @@ import com.ppaass.agent.protocol.message.PpaassMessage;
 import com.ppaass.agent.protocol.message.PpaassMessageProxyPayload;
 import com.ppaass.agent.protocol.message.PpaassMessageProxyPayloadType;
 import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
-import com.ppaass.agent.protocol.message.address.PpaassNetAddressIpValue;
 import com.ppaass.agent.protocol.message.address.PpaassNetAddressType;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddressValue;
 import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryption;
 import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
 import com.ppaass.agent.protocol.message.payload.TcpLoopInitResponseType;
@@ -43,9 +43,9 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         TcpConnection tcpConnection = ctx.channel().attr(tcpConnectionKey).get();
         Log.d(TcpConnectionProxyMessageHandler.class.getName(), "---->>>> Tcp connection activated, begin to relay remote data to device, current connection:  " + tcpConnection);
 
-        PpaassNetAddress sourceAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(tcpConnection.getRepositoryKey().getSourceAddress(), tcpConnection.getRepositoryKey().getSourcePort()));
+        PpaassNetAddress sourceAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressValue(tcpConnection.getRepositoryKey().getSourceAddress(), tcpConnection.getRepositoryKey().getSourcePort()));
 
-        PpaassNetAddress destAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(tcpConnection.getRepositoryKey().getDestinationAddress(), tcpConnection.getRepositoryKey().getDestinationPort()));
+        PpaassNetAddress destAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressValue(tcpConnection.getRepositoryKey().getDestinationAddress(), tcpConnection.getRepositoryKey().getDestinationPort()));
 
         PpaassMessage tcpLoopInitMessage = PpaassMessageUtil.INSTANCE.generateTcpLoopInitRequestMessage(sourceAddress, destAddress, IVpnConst.PPAASS_PROXY_USER_TOKEN, new PpaassMessagePayloadEncryption(PpaassMessagePayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));
 

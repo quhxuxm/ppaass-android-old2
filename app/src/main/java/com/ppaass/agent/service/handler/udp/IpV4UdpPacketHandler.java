@@ -8,8 +8,8 @@ import com.ppaass.agent.protocol.general.udp.UdpPacket;
 import com.ppaass.agent.protocol.general.udp.UdpPacketBuilder;
 import com.ppaass.agent.protocol.message.PpaassMessage;
 import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
-import com.ppaass.agent.protocol.message.address.PpaassNetAddressIpValue;
 import com.ppaass.agent.protocol.message.address.PpaassNetAddressType;
+import com.ppaass.agent.protocol.message.address.PpaassNetAddressValue;
 import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryption;
 import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
 import com.ppaass.agent.service.IVpnConst;
@@ -147,8 +147,8 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             return;
         }
         try {
-            PpaassNetAddress srcAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(ipV4Header.getSourceAddress(), udpPacket.getHeader().getSourcePort()));
-            PpaassNetAddress destAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressIpValue(ipV4Header.getDestinationAddress(), udpPacket.getHeader().getDestinationPort()));
+            PpaassNetAddress srcAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressValue(ipV4Header.getSourceAddress(), udpPacket.getHeader().getSourcePort()));
+            PpaassNetAddress destAddress = new PpaassNetAddress(PpaassNetAddressType.IpV4, new PpaassNetAddressValue(ipV4Header.getDestinationAddress(), udpPacket.getHeader().getDestinationPort()));
             PpaassMessage domainResolveMessage = PpaassMessageUtil.INSTANCE.generateDomainNameResolveRequestMessage(dnsQueryName, dnsQueryId, srcAddress, destAddress,
 
                     IVpnConst.PPAASS_PROXY_USER_TOKEN, new PpaassMessagePayloadEncryption(PpaassMessagePayloadEncryptionType.Aes, UUIDUtil.INSTANCE.generateUuidInBytes()));

@@ -3,14 +3,13 @@ package com.ppaass.agent.protocol.message.address;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-public class PpaassNetAddressIpValue extends APpaassNetAddressValue {
-
+public class PpaassNetAddressValue {
+    private final int port;
     private final byte[] ip;
 
     @JsonCreator
-    public PpaassNetAddressIpValue(@JsonProperty("ip") byte[] ip, @JsonProperty("port") int port) {
-        super(port);
-
+    public PpaassNetAddressValue(@JsonProperty("ip") byte[] ip, @JsonProperty("port") int port) {
+        this.port=port;
         this.ip = ip;
     }
 
@@ -18,4 +17,8 @@ public class PpaassNetAddressIpValue extends APpaassNetAddressValue {
         return ip;
     }
 
+
+    public int getPort() {
+        return port;
+    }
 }

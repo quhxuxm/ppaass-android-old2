@@ -7,7 +7,6 @@ import com.ppaass.agent.protocol.message.PpaassMessage;
 import com.ppaass.agent.protocol.message.PpaassMessageProxyPayload;
 import com.ppaass.agent.protocol.message.PpaassMessageProxyPayloadType;
 import com.ppaass.agent.protocol.message.address.PpaassNetAddress;
-import com.ppaass.agent.protocol.message.address.PpaassNetAddressIpValue;
 import com.ppaass.agent.protocol.message.payload.DomainResolveResponseType;
 import com.ppaass.agent.service.handler.IUdpIpPacketWriter;
 import com.ppaass.agent.service.handler.PpaassMessageUtil;
@@ -48,8 +47,8 @@ public class UdpProxyMessageHandler extends SimpleChannelInboundHandler<PpaassMe
                 PpaassNetAddress srcAddress = domainResolveResponse.getSrcAddress();
                 PpaassNetAddress destAddress = domainResolveResponse.getDestAddress();
 
-                InetSocketAddress srcInetAddress = new InetSocketAddress(InetAddress.getByAddress(((PpaassNetAddressIpValue) srcAddress.getValue()).getIp()), srcAddress.getValue().getPort());
-                InetSocketAddress destInetAddress = new InetSocketAddress(InetAddress.getByAddress(((PpaassNetAddressIpValue) destAddress.getValue()).getIp()), destAddress.getValue().getPort());
+                InetSocketAddress srcInetAddress = new InetSocketAddress(InetAddress.getByAddress(srcAddress.getValue().getIp()), srcAddress.getValue().getPort());
+                InetSocketAddress destInetAddress = new InetSocketAddress(InetAddress.getByAddress(destAddress.getValue().getIp()), destAddress.getValue().getPort());
                 DatagramDnsResponse dnsResponse = new DatagramDnsResponse(srcInetAddress, destInetAddress, Integer.parseInt(domainResolveResponse.getRequestId()));
                 DefaultDnsQuestion dnsQuestion = new DefaultDnsQuestion(domainResolveResponse.getDomainName(), DnsRecordType.A);
                 dnsResponse.addRecord(DnsSection.QUESTION, dnsQuestion);
