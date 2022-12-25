@@ -23,7 +23,7 @@ public class PpaassMessageEncoder extends MessageToByteEncoder<PpaassMessage> {
         //Message body
         var messageBytes = PpaassMessageUtil.INSTANCE.convertPpaassMessageToBytes(msg);
         if (compress) {
-            var lz4Compressor = LZ4Factory.fastestInstance().fastCompressor();
+            var lz4Compressor = LZ4Factory.fastestInstance().highCompressor(17);
             var compressedBodyBytes = lz4Compressor.compress(messageBytes);
             out.writeLong(compressedBodyBytes.length);
             out.writeBytes(compressedBodyBytes);

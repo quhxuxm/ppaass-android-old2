@@ -442,7 +442,7 @@ public class TcpConnection implements Runnable {
                 ch.pipeline().addLast(new PpaassMessageDecoder());
                 ch.pipeline().addLast(new TcpConnectionProxyMessageHandler(TcpConnection.this.tcpIpPacketWriter,
                         TcpConnection.this.proxyChannelConnectedPromise));
-                ch.pipeline().addLast(new PpaassMessageEncoder(false));
+                ch.pipeline().addLast(new PpaassMessageEncoder(IVpnConst.COMPRESS));
             }
         });
         return result;

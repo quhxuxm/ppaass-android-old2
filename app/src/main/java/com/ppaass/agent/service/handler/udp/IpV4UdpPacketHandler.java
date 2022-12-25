@@ -75,7 +75,7 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             protected void initChannel(@NonNull NioSocketChannel ch) {
                 ch.pipeline().addLast(new PpaassMessageDecoder());
                 ch.pipeline().addLast(new UdpProxyMessageHandler(IpV4UdpPacketHandler.this));
-                ch.pipeline().addLast(new PpaassMessageEncoder(false));
+                ch.pipeline().addLast(new PpaassMessageEncoder(IVpnConst.COMPRESS));
             }
         });
         return proxyBootstrap.connect(IVpnConst.PPAASS_PROXY_IP, IVpnConst.PPAASS_PROXY_PORT).sync().channel();
