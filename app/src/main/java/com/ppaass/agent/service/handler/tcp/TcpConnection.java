@@ -78,7 +78,7 @@ public class TcpConnection implements Runnable {
                 new PriorityBlockingQueue<>(1024, Comparator.comparingLong(p -> p.getHeader().getSequenceNumber()));
         this.tcpIpPacketWriter = tcpIpPacketWriter;
         this.vpnService = vpnService;
-        this.proxyChannelBootstrap = this.createBootstrap();
+        this.proxyChannelBootstrap = this.createProxyChannelBootstrap();
         this.proxyChannelConnectedPromise = new DefaultPromise<>(this.proxyChannelBootstrap.config().group().next());
     }
 
@@ -423,7 +423,7 @@ public class TcpConnection implements Runnable {
         return status;
     }
 
-    private Bootstrap createBootstrap() {
+    private Bootstrap createProxyChannelBootstrap() {
         var result = new Bootstrap();
         result.group(new NioEventLoopGroup(1));
         result.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
