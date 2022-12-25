@@ -1,28 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.MAIN"/>
-        </intent>
-    </queries>
-    <uses-permission android:name="android.permission.INTERNET"/>
-    <!--    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
     <application
             android:allowBackup="true"
+            android:dataExtractionRules="@xml/data_extraction_rules"
+            android:fullBackupContent="@xml/backup_rules"
             android:icon="@mipmap/ic_launcher"
             android:label="@string/app_name"
             android:roundIcon="@mipmap/ic_launcher_round"
             android:supportsRtl="true"
-            android:theme="@style/Theme.PpaassAgent" android:name=".PpaassVpnApplication">
+            android:theme="@style/Theme.PpaassAgent"
+            tools:targetApi="31"
+            android:name=".PpaassVpnApplication"
+    >
         <activity
                 android:name=".activity.MainActivity"
-                android:exported="true"
-                android:label="Ppaass Agent"
-        >
+                android:exported="true" android:label="Ppaass Agent">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <meta-data
+                    android:name="android.app.lib_name"
+                    android:value=""/>
         </activity>
         <service
                 android:name=".service.PpaassVpnService"
@@ -35,4 +36,5 @@
             </intent-filter>
         </service>
     </application>
+
 </manifest>
