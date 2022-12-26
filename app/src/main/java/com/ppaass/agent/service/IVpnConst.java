@@ -20,5 +20,5 @@ public interface IVpnConst {
     String PPAASS_PROTOCOL_FLAG = "__PPAASS__";
     String TCP_CONNECTION = "TCP_CONNECTION";
     String PPAASS_PROXY_USER_TOKEN = "user1";
-    boolean COMPRESS = false;
+    boolean COMPRESS = true;
 }
