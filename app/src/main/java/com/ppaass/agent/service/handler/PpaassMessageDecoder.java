@@ -6,9 +6,11 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
-import net.jpountz.lz4.LZ4Factory;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.util.List;
+import java.util.zip.GZIPInputStream;
 
 public class PpaassMessageDecoder extends ByteToMessageDecoder {
     private static final int COMPRESS_FIELD_LENGTH = 1;
@@ -49,11 +51,18 @@ public class PpaassMessageDecoder extends ByteToMessageDecoder {
         var bodyBuf = Unpooled.buffer(this.bodyLength);
         in.readBytes(bodyBuf);
         if (this.compressed) {
-            var lz4Decompressor = LZ4Factory.fastestInstance().safeDecompressor();
             var compressedBodyBytes = new byte[bodyLength];
             bodyBuf.readBytes(compressedBodyBytes);
-            var decompressBodyBytes =
-                    lz4Decompressor.decompress(compressedBodyBytes, 0, bodyLength, bodyLength);
+            var decompressedBytesInputStream = new ByteArrayInputStream(compressedBodyBytes);
+            GZIPInputStream gzipInputStream = null;
+            byte[] decompressBodyBytes = null;
+            try {
+                gzipInputStream = new GZIPInputStream(decompressedBytesInputStream);
+                decompressBodyBytes = gzipInputStream.readAllBytes();
+            } catch (IOException e) {
+                Log.e(PpaassMessageDecoder.class.getName(), "Fail to decompress incoming data because of error", e);
+                throw new RuntimeException(e);
+            }
             bodyBuf = Unpooled.wrappedBuffer(decompressBodyBytes);
         }
         var result = PpaassMessageUtil.INSTANCE.convertBytesToPpaassMessage(bodyBuf);

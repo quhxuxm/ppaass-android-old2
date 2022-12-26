@@ -7,7 +7,9 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
-import net.jpountz.lz4.LZ4Factory;
+
+import java.io.ByteArrayOutputStream;
+import java.util.zip.GZIPOutputStream;
 
 public class PpaassMessageEncoder extends MessageToByteEncoder<PpaassMessage> {
     private final boolean compress;
@@ -23,8 +25,10 @@ public class PpaassMessageEncoder extends MessageToByteEncoder<PpaassMessage> {
         //Message body
         var messageBytes = PpaassMessageUtil.INSTANCE.convertPpaassMessageToBytes(msg);
         if (compress) {
-            var lz4Compressor = LZ4Factory.fastestInstance().highCompressor(17);
-            var compressedBodyBytes = lz4Compressor.compress(messageBytes);
+            var compressedBytesOutputStream = new ByteArrayOutputStream();
+            var gzipOutputStream = new GZIPOutputStream(compressedBytesOutputStream);
+            gzipOutputStream.write(messageBytes);
+            var compressedBodyBytes = compressedBytesOutputStream.toByteArray();
             out.writeLong(compressedBodyBytes.length);
             out.writeBytes(compressedBodyBytes);
             Log.v(PpaassMessageEncoder.class.getName(),
