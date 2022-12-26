@@ -28,6 +28,7 @@ public class PpaassMessageEncoder extends MessageToByteEncoder<PpaassMessage> {
             var compressedBytesOutputStream = new ByteArrayOutputStream();
             var gzipOutputStream = new GZIPOutputStream(compressedBytesOutputStream);
             gzipOutputStream.write(messageBytes);
+            gzipOutputStream.finish();
             var compressedBodyBytes = compressedBytesOutputStream.toByteArray();
             out.writeLong(compressedBodyBytes.length);
             out.writeBytes(compressedBodyBytes);
