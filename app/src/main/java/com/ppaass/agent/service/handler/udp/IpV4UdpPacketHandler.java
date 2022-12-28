@@ -90,11 +90,23 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             parseDnsQueryChannel.pipeline().addLast(new DatagramDnsQueryDecoder());
             parseDnsQueryChannel.writeInbound(dnsPacket);
             DatagramDnsQuery dnsQuery = parseDnsQueryChannel.readInbound();
-            Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query: " + dnsQuery);
+            Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query (UDP): " + dnsQuery);
             return dnsQuery;
         } catch (Exception e) {
-            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when logging DNS Query, data:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n.", e);
-            return null;
+            try{
+                InetSocketAddress udpDestAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getDestinationAddress()), udpPacket.getHeader().getDestinationPort());
+                InetSocketAddress udpSourceAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getSourceAddress()), udpPacket.getHeader().getSourcePort());
+                DatagramPacket dnsPacket = new DatagramPacket(Unpooled.wrappedBuffer(udpPacket.getData()), udpDestAddress, udpSourceAddress);
+                EmbeddedChannel parseDnsQueryChannel = new EmbeddedChannel();
+                parseDnsQueryChannel.pipeline().addLast(new TcpDnsQueryDecoder());
+                parseDnsQueryChannel.writeInbound(dnsPacket);
+                DatagramDnsQuery dnsQuery = parseDnsQueryChannel.readInbound();
+                Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query (TCP): " + dnsQuery);
+                return dnsQuery;
+            }catch (Exception e2){
+                Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when logging DNS Query, data:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n.", e);
+                return null;
+            }
         }
     }
 

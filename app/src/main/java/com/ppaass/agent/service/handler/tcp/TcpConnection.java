@@ -158,6 +158,16 @@ public class TcpConnection implements Runnable {
                             this.closeWaitConnection(deviceInboundTcpPacket);
                             continue;
                         }
+                        if (TcpConnectionStatus.TIME_WAIT == this.status.get()) {
+                            this.currentSequenceNumber.getAndIncrement();
+                            this.currentAcknowledgementNumber.getAndIncrement();
+                            this.tcpIpPacketWriter.writeAckToDevice(null, this,
+                                    this.currentSequenceNumber.get(),
+                                    this.currentAcknowledgementNumber.get(),
+                                    this.findSenderTimestamp(deviceInboundTcpHeader));
+                            this.status.set(TcpConnectionStatus.CLOSED);
+                            continue;
+                        }
                         //Receive fin ack on establish status
                         this.tcpIpPacketWriter.writeRstToDevice(this,
                                 deviceInboundTcpHeader.getAcknowledgementNumber(),
@@ -347,14 +357,14 @@ public class TcpConnection implements Runnable {
         }
         //Connect to Ppaass Proxy start
         try {
-            this.proxyChannel = this.proxyChannelConnectedPromise.get(20, TimeUnit.SECONDS);
+            this.proxyChannel = this.proxyChannelConnectedPromise.get();
         } catch (Exception e) {
             tcpIpPacketWriter.writeRstToDevice(this,
                     deviceInboundTcpHeader.getAcknowledgementNumber(),
                     deviceInboundTcpHeader.getSequenceNumber());
             this.status.set(TcpConnectionStatus.CLOSED);
             Log.e(TcpConnection.class.getName(),
-                    ">>>>>>>> Connect to proxy fail(timeout), current connection:  " + this +
+                    ">>>>>>>> Connect to proxy fail, current connection:  " + this +
                             "; device inbound tcp packet: " + deviceInboundTcpPacket, e);
             return;
         }
@@ -427,8 +437,8 @@ public class TcpConnection implements Runnable {
         var result = new Bootstrap();
         result.group(new NioEventLoopGroup(1));
         result.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
-        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
-        result.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
+//        result.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 120 * 1000);
+//        result.option(ChannelOption.SO_TIMEOUT, 120 * 1000);
         result.option(ChannelOption.SO_KEEPALIVE, true);
         result.option(ChannelOption.AUTO_READ, true);
         result.option(ChannelOption.AUTO_CLOSE, false);
