@@ -6,9 +6,9 @@ import androidx.annotation.NonNull;
 import com.ppaass.agent.protocol.general.tcp.TcpHeader;
 import com.ppaass.agent.protocol.general.tcp.TcpHeaderOption;
 import com.ppaass.agent.protocol.general.tcp.TcpPacket;
-import com.ppaass.agent.protocol.message.*;
-import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
+import com.ppaass.agent.protocol.message.PpaassMessage;
 import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryption;
+import com.ppaass.agent.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
 import com.ppaass.agent.service.IVpnConst;
 import com.ppaass.agent.service.PpaassVpnNettyTcpChannelFactory;
 import com.ppaass.agent.service.handler.ITcpIpPacketWriter;
@@ -33,7 +33,6 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.PriorityBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -50,6 +49,7 @@ public class TcpConnection implements Runnable {
     }
 
     private final String id;
+    private String tcpLoopKey;
     private final AtomicLong latestActiveTime;
     private final TcpConnectionRepositoryKey repositoryKey;
     private Channel proxyChannel;
@@ -67,6 +67,7 @@ public class TcpConnection implements Runnable {
     public TcpConnection(TcpConnectionRepositoryKey repositoryKey, ITcpIpPacketWriter tcpIpPacketWriter,
                          VpnService vpnService) {
         this.id = UUID.randomUUID().toString().replace("-", "");
+
         this.latestActiveTime = new AtomicLong(System.currentTimeMillis());
         this.repositoryKey = repositoryKey;
         this.status = new AtomicReference<>(TcpConnectionStatus.LISTEN);
@@ -496,6 +497,10 @@ public class TcpConnection implements Runnable {
         }
     }
 
+    public void setTcpLoopKey(String tcpLoopKey) {
+        this.tcpLoopKey = tcpLoopKey;
+    }
+
     public TcpConnectionRepositoryKey getRepositoryKey() {
         return repositoryKey;
     }
@@ -522,7 +527,7 @@ public class TcpConnection implements Runnable {
 
     @Override
     public String toString() {
-        return "TcpConnection{id='" + id + '\'' + ", repositoryKey=" + repositoryKey + ", status=" + status +
+        return "TcpConnection{id='" + id + '\'' + ", repositoryKey=" + repositoryKey + ", tcpLoopKey=" + tcpLoopKey + ", status=" + status +
                 ", currentSequenceNumber=" + currentSequenceNumber + ", (Current Relative VPN Sequence Number)=" +
                 this.countRelativeVpnSequenceNumber() + ", currentAcknowledgementNumber=" +
                 currentAcknowledgementNumber + ", (Current Relative VPN Acknowledgement Number)=" +

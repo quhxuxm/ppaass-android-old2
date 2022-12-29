@@ -17,9 +17,7 @@ import static junit.framework.TestCase.assertEquals;
 class ExampleInstrumentedTest {
 
     @Test
-    public void useAppContext() {
-        // Context of the app under test.
-        Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        assertEquals("com.ppaass.agent", appContext.getPackageName());
+    public void test(){
+        System.out.println("Test work");
     }
 }

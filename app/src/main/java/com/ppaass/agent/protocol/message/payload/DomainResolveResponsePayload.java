@@ -59,4 +59,17 @@ public class DomainResolveResponsePayload {
     public void setResponseType(DomainResolveResponseType responseType) {
         this.responseType = responseType;
     }
+
+
+    @Override
+    public String toString() {
+        return "DomainResolveResponsePayload{" +
+                "requestId='" + requestId + '\'' +
+                ", domainName='" + domainName + '\'' +
+                ", resolvedIpAddresses=" + resolvedIpAddresses +
+                ", responseType=" + responseType +
+                ", srcAddress=" + srcAddress +
+                ", destAddress=" + destAddress +
+                '}';
+    }
 }

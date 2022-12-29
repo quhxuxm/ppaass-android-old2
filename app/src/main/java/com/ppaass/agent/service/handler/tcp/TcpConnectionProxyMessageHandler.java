@@ -86,13 +86,14 @@ public class TcpConnectionProxyMessageHandler extends SimpleChannelInboundHandle
         if (PpaassMessageProxyPayloadType.TcpLoopInit == proxyMessagePayload.getPayloadType()) {
             var tcpLoopInitResponsePayloadBytes = proxyMessagePayload.getData();
             var tcpLoopInitResponse = PpaassMessageUtil.INSTANCE.parseTcpLoopInitResponseMessage(tcpLoopInitResponsePayloadBytes);
-
             if (tcpLoopInitResponse.getResponseType() == TcpLoopInitResponseType.Success) {
                 ctx.channel().attr(TCP_LOOP_INIT_RESULT).set(true);
                 this.proxyChannelPromise.setSuccess(ctx.channel());
+                tcpConnection.setTcpLoopKey(tcpLoopInitResponse.getLoopKey());
                 Log.d(TcpConnectionProxyMessageHandler.class.getName(), "<<<<---- Tcp connection connected to proxy already, current connection:  " + tcpConnection);
                 return;
             }
+            tcpConnection.setTcpLoopKey(tcpLoopInitResponse.getLoopKey());
             this.proxyChannelPromise.setFailure(new IllegalStateException("Proxy connect to remote fail"));
             Log.e(TcpConnectionProxyMessageHandler.class.getName(), "<<<<---- Tcp connection fail connected to proxy already, current connection:  " + tcpConnection);
             return;
