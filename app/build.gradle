@@ -45,6 +45,7 @@ dependencies {
     implementation 'commons-io:commons-io:2.11.0'
     implementation 'commons-validator:commons-validator:1.7'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.1'
+//    implementation 'io.netty.incubator:netty-incubator-codec-native-quic:0.0.21.Final:linux-aarch_64'
     // Added by default
     implementation 'androidx.appcompat:appcompat:1.5.1'
     implementation 'com.google.android.material:material:1.7.0'
@@ -52,5 +53,7 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.4'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.0'
+
+
 
 }

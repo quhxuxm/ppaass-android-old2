@@ -7,7 +7,7 @@ public interface IVpnConst {
     int DNS_IDLE_TIMEOUT_MS = Integer.MAX_VALUE;
     int TCP_CONNECTION_NUMBER = 256;
     int MTU = 1500;
-    int READ_BUFFER_SIZE = MTU + 40;
+    int READ_BUFFER_SIZE = 16384;
     //For VPN the mtu can be larger than 1500, but should not more than 65535
     int TCP_MSS = MTU - 40;
     int TCP_WINDOW = 65535;

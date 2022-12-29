@@ -13,6 +13,8 @@ import com.ppaass.agent.service.PpaassVpnService;
 import com.ppaass.agent.service.handler.icmp.IpV4IcmpPacketHandler;
 import com.ppaass.agent.service.handler.tcp.IpV4TcpConnectionManager;
 import com.ppaass.agent.service.handler.udp.IpV4UdpPacketHandler;
+import io.netty.buffer.ByteBufUtil;
+import io.netty.buffer.Unpooled;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -106,6 +108,7 @@ public class IpPacketHandler {
                 return null;
             }
             deviceInputBuffer.flip();
+            Log.v(IpPacketHandler.class.getName(), "Read bytes from device input channel:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(deviceInputBuffer)) + "\n");
             byte[] buffer = new byte[size];
             deviceInputBuffer.get(buffer);
             return IpPacketReader.INSTANCE.parse(buffer);

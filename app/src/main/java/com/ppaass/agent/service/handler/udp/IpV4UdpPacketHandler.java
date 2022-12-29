@@ -32,6 +32,7 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.dns.*;
+//import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
 import io.netty.util.internal.StringUtil;
 import org.apache.commons.validator.routines.DomainValidator;
 
@@ -39,6 +40,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 
 public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
@@ -63,8 +65,8 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         Bootstrap proxyBootstrap = new Bootstrap();
         proxyBootstrap.group(proxyEventLoopGroup);
         proxyBootstrap.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
-        proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 20 * 1000);
-        proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 20 * 1000);
+//        proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 20 * 1000);
+//        proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 20 * 1000);
         proxyBootstrap.option(ChannelOption.SO_KEEPALIVE, true);
         proxyBootstrap.option(ChannelOption.AUTO_READ, true);
         proxyBootstrap.option(ChannelOption.AUTO_CLOSE, false);
@@ -82,10 +84,22 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     }
 
     private DatagramDnsQuery parseDnsQuery(UdpPacket udpPacket, IpV4Header ipHeader) {
+        InetSocketAddress udpDestAddress = null;
         try {
-            InetSocketAddress udpDestAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getDestinationAddress()), udpPacket.getHeader().getDestinationPort());
-            InetSocketAddress udpSourceAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getSourceAddress()), udpPacket.getHeader().getSourcePort());
-            DatagramPacket dnsPacket = new DatagramPacket(Unpooled.wrappedBuffer(udpPacket.getData()), udpDestAddress, udpSourceAddress);
+            udpDestAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getDestinationAddress()), udpPacket.getHeader().getDestinationPort());
+        } catch (UnknownHostException e) {
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when parse DNS Query(parsing destination inet address, data:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n.", e);
+            return null;
+        }
+        InetSocketAddress udpSourceAddress = null;
+        try {
+            udpSourceAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getSourceAddress()), udpPacket.getHeader().getSourcePort());
+        } catch (UnknownHostException e) {
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when parse DNS Query(parsing source inet address, data:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n.", e);
+            return null;
+        }
+        DatagramPacket dnsPacket = new DatagramPacket(Unpooled.wrappedBuffer(udpPacket.getData()), udpDestAddress, udpSourceAddress);
+        try {
             EmbeddedChannel parseDnsQueryChannel = new EmbeddedChannel();
             parseDnsQueryChannel.pipeline().addLast(new DatagramDnsQueryDecoder());
             parseDnsQueryChannel.writeInbound(dnsPacket);
@@ -93,20 +107,22 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query (UDP): " + dnsQuery);
             return dnsQuery;
         } catch (Exception e) {
-            try{
-                InetSocketAddress udpDestAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getDestinationAddress()), udpPacket.getHeader().getDestinationPort());
-                InetSocketAddress udpSourceAddress = new InetSocketAddress(InetAddress.getByAddress(ipHeader.getSourceAddress()), udpPacket.getHeader().getSourcePort());
-                DatagramPacket dnsPacket = new DatagramPacket(Unpooled.wrappedBuffer(udpPacket.getData()), udpDestAddress, udpSourceAddress);
-                EmbeddedChannel parseDnsQueryChannel = new EmbeddedChannel();
-                parseDnsQueryChannel.pipeline().addLast(new TcpDnsQueryDecoder());
-                parseDnsQueryChannel.writeInbound(dnsPacket);
-                DatagramDnsQuery dnsQuery = parseDnsQueryChannel.readInbound();
-                Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query (TCP): " + dnsQuery);
-                return dnsQuery;
-            }catch (Exception e2){
-                Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when logging DNS Query, data:\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n.", e);
-                return null;
-            }
+//            try {
+//                QuicServerCodecBuilder builder = new QuicServerCodecBuilder();
+//                var quicCodec = builder.build();
+//                EmbeddedChannel parseDnsQueryChannel = new EmbeddedChannel();
+//                parseDnsQueryChannel.pipeline().addLast(quicCodec);
+//                parseDnsQueryChannel.writeInbound(dnsPacket);
+//                Object dnsQuery = parseDnsQueryChannel.readInbound();
+//                Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query (UDP): " + dnsQuery);
+//                return null;
+//            } catch (Exception e1) {
+//                Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when parsing DNS Query, UDP packet:" + udpPacket + "\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n", e1);
+//                return null;
+//            }
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when parsing DNS Query, UDP packet:" + udpPacket + "\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n", e);
+            return null;
+
         }
     }
 
