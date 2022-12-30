@@ -106,19 +106,6 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
             Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query (UDP): " + dnsQuery);
             return dnsQuery;
         } catch (Exception e) {
-//            try {
-//                QuicServerCodecBuilder builder = new QuicServerCodecBuilder();
-//                var quicCodec = builder.build();
-//                EmbeddedChannel parseDnsQueryChannel = new EmbeddedChannel();
-//                parseDnsQueryChannel.pipeline().addLast(quicCodec);
-//                parseDnsQueryChannel.writeInbound(dnsPacket);
-//                Object dnsQuery = parseDnsQueryChannel.readInbound();
-//                Log.v(IpV4UdpPacketHandler.class.getName(), "---->>>> DNS Query (UDP): " + dnsQuery);
-//                return null;
-//            } catch (Exception e1) {
-//                Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when parsing DNS Query, UDP packet:" + udpPacket + "\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n", e1);
-//                return null;
-//            }
             Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Error happen when parsing DNS Query, UDP packet:" + udpPacket + "\n" + ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(udpPacket.getData())) + "\n", e);
             return null;
 
