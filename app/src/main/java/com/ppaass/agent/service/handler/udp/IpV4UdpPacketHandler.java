@@ -60,12 +60,12 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     }
 
     private Channel initializeProxyChannel() throws Exception {
-        NioEventLoopGroup proxyEventLoopGroup = new NioEventLoopGroup(1);
+        NioEventLoopGroup proxyEventLoopGroup = new NioEventLoopGroup(3);
         Bootstrap proxyBootstrap = new Bootstrap();
         proxyBootstrap.group(proxyEventLoopGroup);
         proxyBootstrap.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
-        proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10 * 1000);
-        proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 10 * 1000);
+        proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 20 * 1000);
+        proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 20 * 1000);
         proxyBootstrap.option(ChannelOption.SO_KEEPALIVE, false);
         proxyBootstrap.option(ChannelOption.AUTO_READ, true);
         proxyBootstrap.option(ChannelOption.AUTO_CLOSE, true);
