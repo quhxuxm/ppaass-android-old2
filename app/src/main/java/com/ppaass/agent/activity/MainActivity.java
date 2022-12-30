@@ -9,16 +9,19 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import com.ppaass.agent.PpaassVpnApplication;
 import com.ppaass.agent.R;
+import com.ppaass.agent.jni.RustLibrary;
 import com.ppaass.agent.service.PpaassVpnService;
 import com.ppaass.agent.service.handler.dns.DnsRepository;
 
 public class MainActivity extends AppCompatActivity {
     private static final int VPN_SERVICE_REQUEST_CODE = 1;
 
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        Log.e(MainActivity.class.getName(),RustLibrary.doSomething("QUHAO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!NATIVE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"));
         DnsRepository.INSTANCE.init(this.getSharedPreferences("PpaassVpnDns", Context.MODE_PRIVATE));
         var startVpnButton = this.findViewById(R.id.startButton);
         startVpnButton.setOnClickListener(view -> {
