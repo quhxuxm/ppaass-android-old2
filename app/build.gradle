@@ -5,6 +5,7 @@ plugins {
 android {
     namespace 'com.ppaass.agent'
     compileSdk 33
+    ndkVersion '25.1.8937393'
 
     defaultConfig {
         applicationId "com.ppaass.agent"
@@ -35,8 +36,23 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+
     }
 
+}
+
+apply plugin: 'org.mozilla.rust-android-gradle.rust-android'
+
+cargo {
+    module = "../rust-lib"       // Or whatever directory contains your Cargo.toml
+    libname = "rust-lib"          // Or whatever matches Cargo.toml's [package] name.
+    targets = ["arm", "x86"]  // See bellow for a longer list of options
+}
+
+tasks.whenTaskAdded { task ->
+    if ((task.name == 'javaPreCompileDebug' || task.name == 'javaPreCompileRelease')) {
+        task.dependsOn 'cargoBuild'
+    }
 }
 
 dependencies {
@@ -45,7 +61,6 @@ dependencies {
     implementation 'commons-io:commons-io:2.11.0'
     implementation 'commons-validator:commons-validator:1.7'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.1'
-//    implementation 'io.netty.incubator:netty-incubator-codec-native-quic:0.0.21.Final:linux-aarch_64'
     // Added by default
     implementation 'androidx.appcompat:appcompat:1.5.1'
     implementation 'com.google.android.material:material:1.7.0'
@@ -53,7 +68,4 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.4'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.0'
-
-
-
 }

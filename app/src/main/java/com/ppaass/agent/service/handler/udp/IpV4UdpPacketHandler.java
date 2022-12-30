@@ -32,7 +32,6 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.dns.*;
-//import io.netty.incubator.codec.quic.QuicServerCodecBuilder;
 import io.netty.util.internal.StringUtil;
 import org.apache.commons.validator.routines.DomainValidator;
 
@@ -65,11 +64,11 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
         Bootstrap proxyBootstrap = new Bootstrap();
         proxyBootstrap.group(proxyEventLoopGroup);
         proxyBootstrap.channelFactory(new PpaassVpnNettyTcpChannelFactory(this.vpnService));
-//        proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 20 * 1000);
-//        proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 20 * 1000);
+        proxyBootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 30 * 1000);
+        proxyBootstrap.option(ChannelOption.SO_TIMEOUT, 30 * 1000);
         proxyBootstrap.option(ChannelOption.SO_KEEPALIVE, true);
         proxyBootstrap.option(ChannelOption.AUTO_READ, true);
-        proxyBootstrap.option(ChannelOption.AUTO_CLOSE, false);
+        proxyBootstrap.option(ChannelOption.AUTO_CLOSE, true);
         proxyBootstrap.option(ChannelOption.TCP_NODELAY, true);
         proxyBootstrap.option(ChannelOption.SO_REUSEADDR, true);
         proxyBootstrap.handler(new ChannelInitializer<NioSocketChannel>() {
@@ -127,6 +126,10 @@ public class IpV4UdpPacketHandler implements IUdpIpPacketWriter {
     }
 
     public void handle(UdpPacket udpPacket, IpV4Header ipV4Header) throws Exception {
+        if (udpPacket.getHeader().getDestinationPort() == 443) {
+            Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Ignore udp packet because of 443 is using for destination port: " + udpPacket + ", ip header: " + ipV4Header);
+            return;
+        }
         DatagramDnsQuery dnsQuery = this.parseDnsQuery(udpPacket, ipV4Header);
         if (dnsQuery == null) {
             Log.e(IpV4UdpPacketHandler.class.getName(), "---->>>> Ignore udp packet because of invalid dns query: " + udpPacket + ", ip header: " + ipV4Header);
