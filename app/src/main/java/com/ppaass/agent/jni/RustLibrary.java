@@ -4,5 +4,8 @@ public class RustLibrary {
     static {
         System.loadLibrary("rust");
     }
-    public static native String doSomething(String code);
+
+    public static native String handleInputString(String inputMessage);
+
+    public static native ExampleNativeObject handleInputObject(ExampleNativeObject input);
 }

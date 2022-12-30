@@ -33,12 +33,6 @@ android {
         }
     }
 
-//    sourceSets {
-//        main {
-//            jniLibs.srcDir '../rust-lib/target'
-//        }
-//    }
-
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
@@ -52,7 +46,7 @@ apply plugin: 'org.mozilla.rust-android-gradle.rust-android'
 cargo {
     module = "../rust"       // Or whatever directory contains your Cargo.toml
     libname = "rust"          // Or whatever matches Cargo.toml's [package] name.
-    targets = ['arm', 'x86', 'x86_64']      // See bellow for a longer list of options
+    targets = ['arm64', 'x86_64']      // See bellow for a longer list of options
 //    targetIncludes=["rust_lib"]
 }
 
