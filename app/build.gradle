@@ -3,12 +3,12 @@ plugins {
 }
 
 android {
-    namespace 'com.ppaass.agent'
+    namespace 'com.ppaass.agent.rust'
     compileSdk 33
     ndkVersion '25.1.8937393'
 
     defaultConfig {
-        applicationId "com.ppaass.agent"
+        applicationId "com.ppaass.agent.rust"
         minSdk 33
         targetSdk 33
         versionCode 1
