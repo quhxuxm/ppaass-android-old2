@@ -1,0 +1,6 @@
+[target.x86_64-pc-windows-gnu]
+linker = "C:\\Software\\msys64\\mingw64\\bin\\gcc.exe"
+ar = "C:\\Software\\msys64\\mingw64\\bin\\ar.exe"
+[build]
+target = "x86_64-linux-android"
+rustflags = ["--cfg", "tokio_unstable"]
