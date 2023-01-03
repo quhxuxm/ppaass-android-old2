@@ -1,6 +1,9 @@
 [target.x86_64-pc-windows-gnu]
 linker = "C:\\Software\\msys64\\mingw64\\bin\\gcc.exe"
 ar = "C:\\Software\\msys64\\mingw64\\bin\\ar.exe"
+[target.x86_64-linux-android]
+linker = "D:\\Software\\android-sdk\\ndk\\x86_64\\bin\\x86_64-linux-android-clang.cmd"
+ar = "D:\\Software\\android-sdk\\ndk\\x86_64\\bin\\x86_64-linux-android-clang"
 [build]
 target = "x86_64-linux-android"
 rustflags = ["--cfg", "tokio_unstable"]
