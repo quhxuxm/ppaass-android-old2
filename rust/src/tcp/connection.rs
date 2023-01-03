@@ -5,6 +5,7 @@ use log::{debug, error};
 use std::{
     fmt::{Display, Formatter},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    ops::Deref,
     os::fd::AsRawFd,
     sync::Arc,
 };
@@ -109,7 +110,7 @@ pub(crate) struct ReceiveSequenceSpace {
 
 pub(crate) struct TcpConnection<'j> {
     key: TcpConnectionKey,
-    status: TcpConnectionStatus,
+    status: Arc<RwLock<TcpConnectionStatus>>,
     send_sequence_space: Arc<RwLock<SendSequenceSpace>>,
     receive_sequence_space: ReceiveSequenceSpace,
     device_output_stream: Arc<Mutex<File>>,
@@ -149,7 +150,7 @@ impl<'j> TcpConnection<'j> {
         };
         TcpConnection {
             key,
-            status: TcpConnectionStatus::Listen,
+            status: Arc::new(RwLock::new(TcpConnectionStatus::Listen)),
             send_sequence_space: Arc::new(RwLock::new(send_sequence_space)),
             receive_sequence_space,
             device_output_stream,
@@ -162,7 +163,8 @@ impl<'j> TcpConnection<'j> {
 
     pub async fn process<'a>(&mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8]) -> Result<()> {
         log_tcp_header(&self.key, &tcp_header);
-        match self.status {
+        let mut current_connection_status = self.status.write().await;
+        match current_connection_status.deref() {
             TcpConnectionStatus::Listen => {
                 if !tcp_header.syn() {
                     return Err(anyhow::anyhow!(
@@ -171,7 +173,8 @@ impl<'j> TcpConnection<'j> {
                     ));
                 }
                 let iss = rand::random::<u32>();
-                self.status = TcpConnectionStatus::SynReceived;
+                *current_connection_status = TcpConnectionStatus::SynReceived;
+                drop(current_connection_status);
                 let mut send_sequence_space = self.send_sequence_space.write().await;
                 send_sequence_space.iss = iss;
                 send_sequence_space.snd_nxt = iss;
@@ -196,6 +199,10 @@ impl<'j> TcpConnection<'j> {
                 };
                 if let Err(e) = device_output_stream.write(sync_ack_packet_bytes.as_ref()).await {
                     error!("Fail to write sync ack packet to device because of error: {e:?}");
+                    return Err(anyhow::anyhow!("Fail to write sync ack packet to device because of error"));
+                };
+                if let Err(e) = device_output_stream.flush().await {
+                    error!("Fail to flush sync ack packet to device because of error: {e:?}");
                     return Err(anyhow::anyhow!("Fail to write sync ack packet to device because of error"));
                 };
                 drop(send_sequence_space);
@@ -279,7 +286,8 @@ impl<'j> TcpConnection<'j> {
                 debug!("<<<< Tcp connection [{}] success connect to [{destination_socket_address}]", self.key);
                 let (mut destination_read, destination_write) = destination_tcp_stream.into_split();
                 self.destination_write = Some(destination_write);
-                self.status = TcpConnectionStatus::Established;
+                *current_connection_status = TcpConnectionStatus::Established;
+                drop(current_connection_status);
                 self.receive_sequence_space.rcv_nxt = self.receive_sequence_space.irs + 1;
                 self.receive_sequence_space.rcv_wnd = tcp_header.window_size();
                 {
@@ -295,7 +303,9 @@ impl<'j> TcpConnection<'j> {
                 let key_clone = self.key;
                 let device_output_stream_clone = self.device_output_stream.clone();
                 debug!("<<<< Tcp connection [{}] start destination read task.", self.key);
+                let current_connection_status_clone = self.status.clone();
                 let destination_read_guard = tokio::spawn(async move {
+                    let current_connection_status = current_connection_status_clone;
                     let send_sequence_space = send_sequence_space_clone;
                     let key = key_clone;
                     let device_output_stream = device_output_stream_clone;
@@ -304,6 +314,28 @@ impl<'j> TcpConnection<'j> {
                         let destination_read_data_size = match destination_read.read_buf(&mut destination_tcp_buf).await {
                             Ok(0) => {
                                 debug!("<<<< Tcp connection [{key}] read destination data complete.");
+                                let send_sequence_space = send_sequence_space.read().await;
+                                let fin_tcp_packet = PacketBuilder::ipv4(key.destination_address.octets(), key.source_address.octets(), IP_PACKET_TTL)
+                                    .tcp(key.destination_port, key.source_port, send_sequence_space.snd_nxt, send_sequence_space.snd_wnd)
+                                    .fin();
+
+                                let mut fin_tcp_packet_bytes = Vec::with_capacity(fin_tcp_packet.size(0));
+                                if let Err(e) = fin_tcp_packet.write(&mut fin_tcp_packet_bytes, &[0; 0]) {
+                                    error!("<<<< Tcp connection [{key}] fail to generate fin packet because of error: {e:?}");
+                                    return Err(anyhow::anyhow!("Tcp connection [{key}] fail to generate fin packet because of error"));
+                                };
+                                let mut device_output_stream = device_output_stream.lock().await;
+                                if let Err(e) = device_output_stream.write(&fin_tcp_packet_bytes).await {
+                                    error!("<<<< Tcp connection [{key}] fail to write fin packet to device because of error: {e:?}");
+                                    return Err(anyhow::anyhow!("Tcp connection [{key}] fail to write fin packet to device because of error"));
+                                };
+                                if let Err(e) = device_output_stream.flush().await {
+                                    error!("<<<< Tcp connection [{key}] fail to flush fin packet to device because of error: {e:?}");
+                                    return Err(anyhow::anyhow!("Tcp connection [{key}] fail to flush fin packet to device because of error"));
+                                };
+                                let mut current_connection_status = current_connection_status.write().await;
+                                *current_connection_status = TcpConnectionStatus::FinWait1;
+                                debug!("<<<< Tcp connection [{key}] read destination data complete, switch to FinWait1 status.");
                                 return Ok(());
                             },
                             Ok(destination_read_data_size) => destination_read_data_size,
@@ -348,6 +380,12 @@ impl<'j> TcpConnection<'j> {
                                 "Tcp connection [{key}] fail to write destination data packet to device because of error"
                             ));
                         };
+                        if let Err(e) = device_output_stream.flush().await {
+                            error!("<<<< Tcp connection [{key}] fail to flush destination data packet to device because of error: {e:?}");
+                            return Err(anyhow::anyhow!(
+                                "Tcp connection [{key}] fail to flush destination data packet to device because of error"
+                            ));
+                        };
                         drop(send_sequence_space);
                         drop(device_output_stream);
                     }
@@ -358,7 +396,7 @@ impl<'j> TcpConnection<'j> {
             TcpConnectionStatus::Established => {
                 {
                     debug!(
-                        "Tcp connection [{}] on Establish status, send sequence space: {:?}, receive sequence space: {:?}, receive payload:\n{}",
+                        ">>>> Tcp connection [{}] in [Established] status, send sequence space: {:?}, receive sequence space: {:?}, receive payload:\n{}",
                         self.key,
                         self.send_sequence_space.read().await,
                         self.receive_sequence_space,
@@ -366,7 +404,7 @@ impl<'j> TcpConnection<'j> {
                     );
                 }
                 if self.receive_sequence_space.rcv_nxt != tcp_header.sequence_number() {
-                    error!("Tcp connection [{}] fail to relay device data because of the expecting next receive sequence not match the sequence in tcp header, expect next receive sequence: {}, incoming tcp header sequence: {}", self.key, self.receive_sequence_space.rcv_nxt, tcp_header.sequence_number());
+                    error!(">>>> Tcp connection [{}] fail to relay device data because of the expecting next receive sequence not match the sequence in tcp header, expect next receive sequence: {}, incoming tcp header sequence: {}", self.key, self.receive_sequence_space.rcv_nxt, tcp_header.sequence_number());
                     return Err(anyhow::anyhow!(
                        "Tcp connection [{}] fail to relay device data because of the expecting next receive sequence not match the sequence in tcp header, expect next receive sequence: {}, incoming tcp header sequence: {}", self.key, self.receive_sequence_space.rcv_nxt, tcp_header.sequence_number()
                     ));
@@ -376,7 +414,10 @@ impl<'j> TcpConnection<'j> {
                 let device_data_length: u32 = match relay_data_length.try_into() {
                     Ok(relay_data_length) => relay_data_length,
                     Err(e) => {
-                        error!("Tcp connection [{}] fail convert relay data length to u32 because of error: {e:?}", self.key);
+                        error!(
+                            ">>>> Tcp connection [{}] fail convert relay data length to u32 because of error: {e:?}",
+                            self.key
+                        );
                         return Err(anyhow::anyhow!(
                             "Tcp connection [{}] fail convert relay data length to u32 because of error.",
                             self.key
@@ -388,7 +429,7 @@ impl<'j> TcpConnection<'j> {
                 };
                 if let Err(e) = destination_write.write(payload).await {
                     error!(
-                        "Tcp connection [{}] fail to write relay tcp payload to destination because of error: {e:?}",
+                        ">>>> Tcp connection [{}] fail to write relay tcp payload to destination because of error: {e:?}",
                         self.key
                     );
                     return Err(anyhow::anyhow!(
@@ -398,11 +439,11 @@ impl<'j> TcpConnection<'j> {
                 };
                 if let Err(e) = destination_write.flush().await {
                     error!(
-                        "Tcp connection [{}] fail to flush relay tcp payload to destination because of error: {e:?}",
+                        ">>>> Tcp connection [{}] fail to flush relay tcp payload to destination because of error: {e:?}",
                         self.key
                     );
                     return Err(anyhow::anyhow!(
-                        "Tcp connection [{}] fail to flush relay tcp payload to destination because of error: {e:?}",
+                        ">>>> Tcp connection [{}] fail to flush relay tcp payload to destination because of error: {e:?}",
                         self.key
                     ));
                 };
@@ -421,7 +462,10 @@ impl<'j> TcpConnection<'j> {
                 drop(send_sequence_space);
                 let mut device_data_received_ack_tcp_packet_bytes = Vec::with_capacity(device_data_received_ack_tcp_packet.size(0));
                 if let Err(e) = device_data_received_ack_tcp_packet.write(&mut device_data_received_ack_tcp_packet_bytes, &[0u8; 0]) {
-                    error!("Tcp connection [{}] fail to generate device data ack packet because of error: {e:?}", self.key);
+                    error!(
+                        ">>>> Tcp connection [{}] fail to generate device data ack packet because of error: {e:?}",
+                        self.key
+                    );
                     return Err(anyhow::anyhow!(
                         "Tcp connection [{}] fail to generate device data ack packet because of error",
                         self.key
@@ -430,7 +474,7 @@ impl<'j> TcpConnection<'j> {
                 let mut device_output_stream = self.device_output_stream.lock().await;
                 if let Err(e) = device_output_stream.write(device_data_received_ack_tcp_packet_bytes.as_ref()).await {
                     error!(
-                        "Tcp connection [{}] fail to write device relay ack data packet to device because of error: {e:?}",
+                        ">>>> Tcp connection [{}] fail to write device relay ack data packet to device because of error: {e:?}",
                         self.key
                     );
                     return Err(anyhow::anyhow!(
@@ -438,11 +482,26 @@ impl<'j> TcpConnection<'j> {
                         self.key
                     ));
                 };
+                if let Err(e) = device_output_stream.flush().await {
+                    error!(
+                        ">>>> Tcp connection [{}] fail to flush device relay ack data packet to device because of error: {e:?}",
+                        self.key
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Tcp connection [{}] fail to flush device relay ack data packet to device because of error",
+                        self.key
+                    ));
+                };
 
                 Ok(())
             },
+            TcpConnectionStatus::FinWait1 => {
+                if tcp_header.ack() && self.receive_sequence_space.rcv_nxt != tcp_header.sequence_number() {}
+                debug!(">>>> Tcp connection [{}] in FinWait1 status, receive ack for fin", self.key);
+                Ok(())
+            },
             TcpConnectionStatus::Closed => todo!(),
-            TcpConnectionStatus::FinWait1 => todo!(),
+
             TcpConnectionStatus::FinWait2 => todo!(),
             TcpConnectionStatus::Closing => todo!(),
             TcpConnectionStatus::TimeWait => todo!(),
