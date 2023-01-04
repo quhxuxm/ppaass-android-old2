@@ -94,9 +94,30 @@ impl Display for TcpConnectionStatus {
 /// 2 - sequence numbers of unacknowledged data
 /// 3 - sequence numbers allowed for new data transmission
 /// 4 - future sequence numbers which are not yet allowed
+///
+/// If the data flow is momentarily idle and all data
+/// sent has been acknowledged then the SND.UNA = SND.NXT = RCV.NXT
+///
 #[derive(Debug)]
 pub(crate) struct SendSequenceSpace {
+    /// The sender of data keeps track of the oldest
+    /// unacknowledged sequence number in the
+    /// variable SND.UNA
+    ///
+    /// When the data sender receives an acknowledgment
+    /// it advances SND.UNA
+    ///
+    /// The amount by which the variables are advanced is the
+    /// length of the data in the segment
     pub snd_una: u32,
+    /// The sender of data keeps track of the next
+    /// sequence number to use in the variable SND.NXT.
+    ///
+    /// When the sender creates a segment and transmits
+    /// it the sender advances SND.NXT
+    ///
+    /// The amount by which the variables are advanced is the
+    /// length of the data in the segment
     pub snd_nxt: u32,
     pub snd_wnd: u16,
     pub snd_up: bool,
@@ -123,12 +144,28 @@ pub(crate) struct SendSequenceSpace {
 /// 3 - future sequence numbers which are not yet allowed
 #[derive(Debug)]
 pub(crate) struct ReceiveSequenceSpace {
+    /// The receiver of data keeps track of the next
+    /// sequence number to expect in the variable RCV.NXT
+    ///
+    /// When the receiver accepts a segment it advances RCV.NXT
+    /// and sends an acknowledgment
+    ///
+    /// The amount by which the variables are advanced is the
+    /// length of the data in the segment
     pub rcv_nxt: u32,
     pub rcv_wnd: u16,
     pub rcv_up: bool,
     pub irs: u32,
 }
 
+/// Current Segment Variables
+///
+/// SEG.SEQ - segment sequence number
+/// SEG.ACK - segment acknowledgment number
+/// SEG.LEN - segment length
+/// SEG.WND - segment window
+/// SEG.UP  - segment urgent pointer
+/// SEG.PRC - segment precedence value
 pub(crate) struct CurrentSegmentVariables {
     pub seg_seq: u32,
     pub seg_ack: u32,
@@ -206,21 +243,16 @@ impl<'j> TcpConnection<'j> {
                 drop(current_connection_status);
                 let mut send_sequence_space = self.send_sequence_space.write().await;
                 send_sequence_space.iss = iss;
-                send_sequence_space.snd_nxt = iss;
-                send_sequence_space.snd_una = tcp_header.sequence_number() + 1;
+                send_sequence_space.snd_nxt = iss + 1;
+                send_sequence_space.snd_una = send_sequence_space.snd_nxt;
                 self.receive_sequence_space.irs = tcp_header.sequence_number();
-                self.receive_sequence_space.rcv_nxt = iss + 1;
+                self.receive_sequence_space.rcv_nxt = tcp_header.sequence_number() + 1;
                 self.receive_sequence_space.rcv_wnd = tcp_header.window_size();
                 let mut device_output_stream = self.device_output_stream.lock().await;
                 let sync_ack_tcp_packet = PacketBuilder::ipv4(self.key.destination_address.octets(), self.key.source_address.octets(), IP_PACKET_TTL)
-                    .tcp(
-                        self.key.destination_port,
-                        self.key.source_port,
-                        send_sequence_space.snd_nxt,
-                        send_sequence_space.snd_wnd,
-                    )
+                    .tcp(self.key.destination_port, self.key.source_port, iss, send_sequence_space.snd_wnd)
                     .syn()
-                    .ack(send_sequence_space.snd_una);
+                    .ack(self.receive_sequence_space.rcv_nxt);
                 let mut sync_ack_packet_bytes = Vec::with_capacity(sync_ack_tcp_packet.size(0));
                 if let Err(e) = sync_ack_tcp_packet.write(&mut sync_ack_packet_bytes, &[0u8; 0]) {
                     error!("Fail to generate sync ack packet because of error: {e:?}");
@@ -250,14 +282,16 @@ impl<'j> TcpConnection<'j> {
                         self.key
                     ));
                 }
-                if tcp_header.acknowledgment_number() != self.receive_sequence_space.rcv_nxt {
+                let send_sequence_space = self.send_sequence_space.read().await;
+                if tcp_header.acknowledgment_number() != send_sequence_space.snd_una {
                     return Err(anyhow::anyhow!(
                         "Receive invalid tcp packet for tcp connection [{}], expect ack number={}, ack=true, but ack number={}",
                         self.key,
-                        self.receive_sequence_space.rcv_nxt,
+                        send_sequence_space.snd_una,
                         tcp_header.acknowledgment_number()
                     ));
                 }
+                drop(send_sequence_space);
                 let destination_socket_address = SocketAddr::V4(SocketAddrV4::new(self.key.destination_address, self.key.destination_port));
                 // let destination_socket_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(110, 242, 68, 3), 80));
                 debug!("Tcp connection [{}] begin connect to [{destination_socket_address}]", self.key);
