@@ -83,6 +83,17 @@ impl Display for TcpConnectionStatus {
 /// * SND.WL1 - segment sequence number used for last window update
 /// * SND.WL2 - segment acknowledgment number used for last window update
 /// * ISS     - initial send sequence number
+///
+/// Send Sequence Space
+///
+///            1         2          3          4
+///       ----------|----------|----------|----------
+///              SND.UNA    SND.NXT    SND.UNA
+///                                   +SND.WND
+/// 1 - old sequence numbers which have been acknowledged
+/// 2 - sequence numbers of unacknowledged data
+/// 3 - sequence numbers allowed for new data transmission
+/// 4 - future sequence numbers which are not yet allowed
 #[derive(Debug)]
 pub(crate) struct SendSequenceSpace {
     pub snd_una: u32,
@@ -100,12 +111,30 @@ pub(crate) struct SendSequenceSpace {
 /// * RCV.WND - receive window
 /// * RCV.UP  - receive urgent pointer
 /// * IRS     - initial receive sequence number
+///
+/// Receive Sequence Space
+///
+///                1          2          3
+///            ----------|----------|----------
+///                   RCV.NXT    RCV.NXT
+///                             +RCV.WND
+/// 1 - old sequence numbers which have been acknowledged
+/// 2 - sequence numbers allowed for new reception
+/// 3 - future sequence numbers which are not yet allowed
 #[derive(Debug)]
 pub(crate) struct ReceiveSequenceSpace {
     pub rcv_nxt: u32,
     pub rcv_wnd: u16,
     pub rcv_up: bool,
     pub irs: u32,
+}
+
+pub(crate) struct CurrentSegmentVariables {
+    pub seg_seq: u32,
+    pub seg_ack: u32,
+    pub seg_wnd: u32,
+    pub seg_up: bool,
+    pub seg_prc: bool,
 }
 
 pub(crate) struct TcpConnection<'j> {
@@ -314,7 +343,8 @@ impl<'j> TcpConnection<'j> {
                         let destination_read_data_size = match destination_read.read_buf(&mut destination_tcp_buf).await {
                             Ok(0) => {
                                 debug!("<<<< Tcp connection [{key}] read destination data complete.");
-                                let send_sequence_space = send_sequence_space.read().await;
+                                let mut send_sequence_space = send_sequence_space.write().await;
+                                send_sequence_space.snd_nxt += 1;
                                 let fin_tcp_packet = PacketBuilder::ipv4(key.destination_address.octets(), key.source_address.octets(), IP_PACKET_TTL)
                                     .tcp(key.destination_port, key.source_port, send_sequence_space.snd_nxt, send_sequence_space.snd_wnd)
                                     .fin();
