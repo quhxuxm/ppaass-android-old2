@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    tcp::connection::{TcpConnection, TcpConnectionKey},
+    tcp::{connection::TcpConnection, model::TcpConnectionKey},
     udp::handler::{handle_udp_packet, UdpPacketInfo},
 };
 use android_logger::Config;
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
 
     vpn_handler_tuntime.block_on(async move {
         info!("Start vpn handler runtime success.");
-        let mut tcp_connection_repository = HashMap::<TcpConnectionKey, TcpConnection>::new();
+        let mut tcp_connection_repository = HashMap::<TcpConnectionKey, TcpConnection<'_, TokioAsyncFile>>::new();
         let mut device_input_stream = unsafe { TokioAsyncFile::from_raw_fd(device_fd) };
         let device_output_stream = Arc::new(Mutex::new(unsafe { TokioAsyncFile::from_raw_fd(device_fd) }));
         loop {
