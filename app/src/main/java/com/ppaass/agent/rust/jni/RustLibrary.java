@@ -13,4 +13,5 @@ public class RustLibrary {
     public static native ExampleNativeObject handleInputObject(ExampleNativeObject input);
 
     public static native void startVpn(int vpnFd, VpnService vpnService);
+    public static native void initLog();
 }

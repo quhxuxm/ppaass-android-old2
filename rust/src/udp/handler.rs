@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use etherparse::PacketBuilder;
 use jni::{objects::JObject, JNIEnv};
 use log::{debug, error};
@@ -48,29 +48,29 @@ pub(crate) async fn handle_udp_packet(udp_packet_info: UdpPacketInfo<'_>) -> Res
         Ok(local_udp_socket) => local_udp_socket,
         Err(e) => {
             error!("Udp socket [{udp_packet_key}] fail to bind because of error: {e:?}");
-            return Err(anyhow::anyhow!(e));
+            return Err(anyhow!(e));
         },
     };
     let udp_socket_raw_fd = local_udp_socket.as_raw_fd();
     if let Err(e) = protect_socket(&udp_packet_key, jni_env, vpn_service_java_obj, udp_socket_raw_fd) {
         error!("Udp socket [{udp_packet_key}] fail to protect udp socket because of error: {e:?}");
-        return Err(anyhow::anyhow!(e));
+        return Err(anyhow!(e));
     };
 
     tokio::spawn(async move {
         let destination_socket_address = SocketAddr::V4(SocketAddrV4::new(destination_address, destination_port));
         if let Err(e) = local_udp_socket.connect(destination_socket_address).await {
             error!("Udp socket [{udp_packet_key}] fail connect to destination because of error: {e:?}");
-            return Err(anyhow::anyhow!(e));
+            return Err(anyhow!(e));
         };
 
         debug!(
-            "Udp socket [{udp_packet_key}] forward packet to destination, payload:\n{}",
+            "Udp socket [{udp_packet_key}] forward packet to destination, payload:\n\n{}",
             pretty_hex::pretty_hex(&payload)
         );
         if let Err(e) = local_udp_socket.send(&payload).await {
             error!("Udp socket [{udp_packet_key}] fail send to destination because of error: {e:?}");
-            return Err(anyhow::anyhow!(e));
+            return Err(anyhow!(e));
         };
         let dns_packet = match DnsPacket::parse(&payload) {
             Ok(dns_packet) => Some(dns_packet),
@@ -80,7 +80,7 @@ pub(crate) async fn handle_udp_packet(udp_packet_info: UdpPacketInfo<'_>) -> Res
             },
         };
         if let Some(dns_packet) = dns_packet {
-            debug!("Udp socket [{udp_packet_key}] send dns question packet to destination: {dns_packet:#?}");
+            debug!("Udp socket [{udp_packet_key}] send dns question packet to destination:\n\n{dns_packet:#?}");
         }
         debug!("Udp socket [{udp_packet_key}] success forward packet to destination, udp socket: {local_udp_socket:?}");
         // loop {
@@ -89,9 +89,7 @@ pub(crate) async fn handle_udp_packet(udp_packet_info: UdpPacketInfo<'_>) -> Res
         let receive_data_size = match timeout(Duration::from_secs(5), local_udp_socket.recv(&mut receive_data)).await {
             Err(_) => {
                 error!("Udp socket [{udp_packet_key}] fail to receive destination data because of timeout.");
-                return Err::<(), anyhow::Error>(anyhow::anyhow!(
-                    "Udp socket [{udp_packet_key}] fail to receive destination data because of timeout."
-                ));
+                return Err::<(), anyhow::Error>(anyhow!("Udp socket [{udp_packet_key}] fail to receive destination data because of timeout."));
             },
             Ok(Ok(0)) => {
                 debug!("Udp socket [{udp_packet_key}] nothing receive from destination, udp socket: {local_udp_socket:?}");
@@ -100,12 +98,12 @@ pub(crate) async fn handle_udp_packet(udp_packet_info: UdpPacketInfo<'_>) -> Res
             Ok(Ok(receive_data_size)) => receive_data_size,
             Ok(Err(e)) => {
                 error!("Udp socket [{udp_packet_key}] fail to receive destination data because of error: {e:?}");
-                return Err::<(), anyhow::Error>(anyhow::anyhow!(e));
+                return Err::<(), anyhow::Error>(anyhow!(e));
             },
         };
         let receive_data = &receive_data[0..receive_data_size];
         debug!(
-            "Udp socket [{udp_packet_key}] success receive destination data:\n{}",
+            "Udp socket [{udp_packet_key}] success receive destination data:\n\n{}",
             pretty_hex::pretty_hex(&receive_data)
         );
         let dns_packet = match DnsPacket::parse(receive_data) {
@@ -116,23 +114,23 @@ pub(crate) async fn handle_udp_packet(udp_packet_info: UdpPacketInfo<'_>) -> Res
             },
         };
         if let Some(dns_packet) = dns_packet {
-            debug!("Udp socket [{udp_packet_key}] receive dns answer packet from destination: {dns_packet:#?}");
+            debug!("Udp socket [{udp_packet_key}] receive dns answer packet from destination:\n\n{dns_packet:#?}");
         }
         let received_destination_udp_packet =
             PacketBuilder::ipv4(destination_address.octets(), source_address.octets(), IP_PACKET_TTL).udp(destination_port, source_port);
         let mut received_destination_udp_packet_bytes = Vec::with_capacity(received_destination_udp_packet.size(receive_data_size));
         if let Err(e) = received_destination_udp_packet.write(&mut received_destination_udp_packet_bytes, receive_data) {
             error!("Udp socket [{udp_packet_key}] fail to prepare destination data udp packet write to device because of error: {e:?}");
-            return Err::<(), anyhow::Error>(anyhow::anyhow!(e));
+            return Err::<(), anyhow::Error>(anyhow!(e));
         };
         let mut device_output_stream = device_output_stream.lock().await;
         if let Err(e) = device_output_stream.write(&received_destination_udp_packet_bytes).await {
             error!("Udp socket [{udp_packet_key}] fail to write to device because of error: {e:?}");
-            return Err::<(), anyhow::Error>(anyhow::anyhow!(e));
+            return Err::<(), anyhow::Error>(anyhow!(e));
         };
         if let Err(e) = device_output_stream.flush().await {
             error!("Udp socket [{udp_packet_key}] fail to flush to device because of error: {e:?}");
-            return Err::<(), anyhow::Error>(anyhow::anyhow!(e));
+            return Err::<(), anyhow::Error>(anyhow!(e));
         };
         Ok(())
         // }

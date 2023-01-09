@@ -64,6 +64,7 @@ public class PpaassVpnService extends VpnService {
         var initializeResult =
                 new PpaassVpnApplication.VpnInitializeResult(vpnInterface);
         application.attachInitializeResult(initializeResult);
+        RustLibrary.initLog();
     }
 
     @Override

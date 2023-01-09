@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Result};
 use jni::{objects::JObject, JNIEnv};
-use log::{debug, error};
+use log::debug;
 use rand::random;
 
 use std::{
+    collections::HashMap,
     net::{SocketAddr, SocketAddrV4},
     os::fd::AsRawFd,
     sync::Arc,
@@ -22,7 +23,7 @@ use tokio::{
 
 use etherparse::{Ipv4HeaderSlice, PacketBuilder, TcpHeaderSlice};
 
-use crate::{protect_socket, tcp::log_tcp_header};
+use crate::protect_socket;
 
 use super::model::{TcpConnectionDataModel, TcpConnectionKey, TcpConnectionStatus};
 
@@ -40,13 +41,17 @@ where
     destination_read_guard: Option<JoinHandle<Result<()>>>,
     vpn_service_java_obj: JObject<'j>,
     jni_env: JNIEnv<'j>,
+    connection_repository: Arc<RwLock<HashMap<TcpConnectionKey, TcpConnection<'j, T>>>>,
 }
 
 impl<'j, T> TcpConnection<'j, T>
 where
     T: AsyncWrite + Unpin + Send + 'static,
 {
-    pub fn new(key: TcpConnectionKey, device_output_stream: Arc<Mutex<T>>, jni_env: JNIEnv<'j>, vpn_service_java_obj: JObject<'j>) -> Self {
+    pub fn new(
+        key: TcpConnectionKey, device_output_stream: Arc<Mutex<T>>, jni_env: JNIEnv<'j>, vpn_service_java_obj: JObject<'j>,
+        connection_repository: Arc<RwLock<HashMap<TcpConnectionKey, TcpConnection<'j, T>>>>,
+    ) -> Self {
         TcpConnection {
             key,
             data_model: Default::default(),
@@ -55,67 +60,86 @@ where
             jni_env,
             vpn_service_java_obj,
             destination_read_guard: None,
+            connection_repository,
         }
     }
 
-    pub async fn process<'a>(&mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8]) -> Result<()> {
-        log_tcp_header(&self.key, &tcp_header, payload.len());
+    pub async fn close_connection(&self, send_reset: bool) {
+        if send_reset {
+            let data_model = self.data_model.read().await;
+            if let Err(e) = send_rst_to_device(self.key, &data_model, self.device_output_stream.clone()).await {
+                debug!(">>>> Tcp connection [{}] fail to send reset to device because of error: {e:?}", self.key)
+            };
+        }
+        let mut connection_repository = self.connection_repository.write().await;
+        connection_repository.remove(&self.key);
+    }
 
+    pub async fn process<'a>(&mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8]) -> Result<()> {
         let mut data_model = self.data_model.write().await;
-        debug!(
-            ">>>> Current tcp connection [{}] before process the data model is:\n{:#?}",
-            self.key, data_model
-        );
 
         match data_model.status {
             TcpConnectionStatus::Listen => {
                 // Process the connection when the connection in Listen status
+                debug!(
+                    ">>>> Tcp connection [{}] in Listen status receive tcp header:\n\n{:#?}\n\nCurrent data_model:\n\n{data_model:#?}\n\n",
+                    self.key,
+                    tcp_header.to_header()
+                );
                 if !tcp_header.syn() {
-                    error!(
+                    debug!(
                         ">>>> Tcp connection [{}] in Listen status receive a invalid tcp packet, expect syn=true.",
                         self.key
                     );
+                    self.close_connection(true).await;
                     return Err(anyhow!(
                         "Tcp connection [{}] in Listen status receive a invalid tcp packet, expect syn=true.",
                         self.key
                     ));
                 }
+
                 let initial_send_sequence_number = random::<u32>();
 
                 data_model.status = TcpConnectionStatus::SynReceived;
 
-                data_model.send_sequence_space.iss = initial_send_sequence_number;
-                data_model.send_sequence_space.snd_nxt = initial_send_sequence_number;
-                data_model.send_sequence_space.snd_una = initial_send_sequence_number;
-                data_model.send_sequence_space.snd_wnd = WINDOW_SIZE;
-
                 data_model.current_segment_space.seg_seq = initial_send_sequence_number;
-                data_model.current_segment_space.seg_ack = tcp_header.sequence_number();
+                // Expect next device tcp packet should increase the sequence by 1
+                data_model.current_segment_space.seg_ack = tcp_header.sequence_number() + 1;
                 data_model.current_segment_space.seg_wnd = WINDOW_SIZE;
-                // The syn will also count into segment length,
-                // but the ack will not count in
+                // Syn will also count into segment length, but the ack will not count in
                 data_model.current_segment_space.seq_len = 1;
+
+                data_model.send_sequence_space.iss = initial_send_sequence_number;
+                data_model.send_sequence_space.snd_nxt = data_model.current_segment_space.seg_seq + 1;
+                data_model.send_sequence_space.snd_una = data_model.current_segment_space.seg_seq;
+                data_model.send_sequence_space.snd_wnd = WINDOW_SIZE;
 
                 data_model.receive_sequence_space.irs = tcp_header.sequence_number();
                 data_model.receive_sequence_space.rcv_nxt = tcp_header.sequence_number() + 1;
                 data_model.receive_sequence_space.rcv_wnd = WINDOW_SIZE;
 
-                debug!(">>>> Tcp connection [{}] in Listen status begin to send syn+ack to device.", self.key);
                 if let Err(e) = send_syn_ack_to_device(self.key, &data_model, self.device_output_stream.clone()).await {
-                    error!(">>>> Tcp connection [{}] fail to send sync ack to device because of error: {e:?}", self.key,);
+                    debug!(">>>> Tcp connection [{}] fail to send sync ack to device because of error: {e:?}", self.key,);
+                    self.close_connection(true).await;
                     return Err(anyhow!("Tcp connection [{}] fail to send sync ack to device because of error: {e:?}", self.key));
                 };
-                debug!("<<<< Tcp connection [{}] write sync ack to device, data_model: \n{:#?}", self.key, &data_model);
                 Ok(())
             },
 
             TcpConnectionStatus::SynReceived => {
                 // Process the connection when the connection in SynReceived status
+                debug!(
+                    ">>>> Tcp connection [{}] in SynReceived status receive tcp header:\n\n{:#?}\n\nCurrent data_model:\n\n{data_model:#?}\n\n",
+                    self.key,
+                    tcp_header.to_header()
+                );
+
                 if tcp_header.syn() {
-                    error!(
+                    debug!(
                         ">>>> Tcp connection [{}] receive invalid tcp packet, expect receive sync=false, ack=true, but sync=true",
                         self.key,
                     );
+                    self.close_connection(true).await;
                     return Err(anyhow!(
                         "Tcp connection [{}] receive invalid tcp packet, expect receive sync=false, ack=true, but sync=true",
                         self.key
@@ -123,30 +147,31 @@ where
                 }
                 if !tcp_header.ack() {
                     // In SynReceived status, connection should receive a ack.
-                    error!(
+                    debug!(
                         ">>>> Tcp connection [{}] receive invalid tcp packet, expect receive sync=false, ack=true, but sync=true",
                         self.key,
                     );
+                    self.close_connection(true).await;
                     return Err(anyhow!(
                         "Tcp connection [{}] receive invalid tcp packet, expect receive sync=false, ack=true, but ack=false",
                         self.key
                     ));
                 }
 
-                if tcp_header.acknowledgment_number() != data_model.send_sequence_space.snd_una {
-                    error!(">>>> Tcp connection [{}] receive invalid tcp packet, data_model:\n {data_model:#?}", self.key,);
+                if tcp_header.sequence_number() != data_model.receive_sequence_space.rcv_nxt {
+                    debug!(">>>> Tcp connection [{}] receive invalid tcp packet, data_model: {data_model:?}", self.key,);
+                    self.close_connection(true).await;
+                    return Err(anyhow!("Tcp connection [{}] receive invalid tcp packet, data_model: {data_model:?}", self.key,));
+                }
+
+                if tcp_header.acknowledgment_number() != data_model.send_sequence_space.snd_una + 1 {
+                    debug!(">>>> Tcp connection [{}] receive invalid tcp packet, data_model:\n {data_model:#?}", self.key,);
+                    self.close_connection(true).await;
                     return Err(anyhow!(
                         "Tcp connection [{}] receive invalid tcp packet, data_model:\n{data_model:#?}",
                         self.key,
                     ));
                 }
-
-                if tcp_header.sequence_number() != data_model.receive_sequence_space.rcv_nxt {
-                    error!(">>>> Tcp connection [{}] receive invalid tcp packet, data_model: {data_model:?}", self.key,);
-                    return Err(anyhow!("Tcp connection [{}] receive invalid tcp packet, data_model: {data_model:?}", self.key,));
-                }
-
-                data_model.current_segment_space.seg_ack = tcp_header.acknowledgment_number();
 
                 let destination_socket_address = SocketAddr::V4(SocketAddrV4::new(self.key.destination_address, self.key.destination_port));
                 debug!(">>>> Tcp connection [{}] begin connect to [{destination_socket_address}]", self.key);
@@ -154,24 +179,27 @@ where
                     Ok(destination_tcp_socket) => {
                         let destination_tcp_socket_raw_fd = destination_tcp_socket.as_raw_fd();
                         if let Err(e) = protect_socket(format!("{}", self.key), self.jni_env, self.vpn_service_java_obj, destination_tcp_socket_raw_fd) {
-                            error!(">>>> Tcp connection [{}] fail to protect destination socket because of error: {e:?}", self.key);
+                            debug!(">>>> Tcp connection [{}] fail to protect destination socket because of error: {e:?}", self.key);
+                            self.close_connection(true).await;
                             return Err(anyhow!("Tcp connection [{}] fail to protect destination socket because of error", self.key));
                         };
                         if let Err(e) = destination_tcp_socket.set_reuseaddr(true) {
-                            error!(
+                            debug!(
                                 ">>>> Tcp connection [{}] fail to set reuse address in destination socket because of error: {e:?}",
                                 self.key
                             );
+                            self.close_connection(true).await;
                             return Err(anyhow!(
                                 "Tcp connection [{}] fail to set reuse address in destination socket because of error",
                                 self.key
                             ));
                         };
                         if let Err(e) = destination_tcp_socket.set_reuseport(true) {
-                            error!(
+                            debug!(
                                 ">>>> Tcp connection [{}] fail to set reuse port in destination socket because of error: {e:?}",
                                 self.key
                             );
+                            self.close_connection(true).await;
                             return Err(anyhow!(
                                 "Tcp connection [{}] fail to set reuse port in destination socket because of error",
                                 self.key
@@ -180,22 +208,25 @@ where
                         destination_tcp_socket
                     },
                     Err(e) => {
-                        error!(
+                        debug!(
                             ">>>> Tcp connection [{}] fail to create destination tcp socket because of error: {e:?}",
                             self.key
                         );
+                        self.close_connection(true).await;
                         return Err(anyhow!("Tcp connection [{}] fail to create destination tcp socket because of error.", self.key));
                     },
                 };
 
-                let destination_tcp_stream = match timeout(Duration::from_secs(5), destination_tcp_socket.connect(destination_socket_address)).await {
+                let destination_tcp_stream = match timeout(Duration::from_secs(20), destination_tcp_socket.connect(destination_socket_address)).await {
                     Err(_) => {
-                        error!(">>>> Tcp connection [{}] fail connect to destination because of timeout.", self.key);
+                        debug!(">>>> Tcp connection [{}] fail connect to destination because of timeout.", self.key);
+                        self.close_connection(true).await;
                         return Err(anyhow!("Tcp connection [{}] fail connect to destination because of timeout.", self.key));
                     },
                     Ok(Ok(destination_tcp_stream)) => destination_tcp_stream,
                     Ok(Err(e)) => {
-                        error!(">>>> Tcp connection [{}] fail connect to destination because of error: {e:?}", self.key);
+                        debug!(">>>> Tcp connection [{}] fail connect to destination because of error: {e:?}", self.key);
+                        self.close_connection(true).await;
                         return Err(anyhow!("Tcp connection [{}] fail connect to destination because of error: {e:?}", self.key));
                     },
                 };
@@ -203,11 +234,6 @@ where
                 let (destination_read, destination_write) = destination_tcp_stream.into_split();
                 self.destination_write = Some(destination_write);
                 data_model.status = TcpConnectionStatus::Established;
-                debug!(
-                    ">>>> Tcp connection [{}] switch to Establish status, data_model:\n{:#?}.",
-                    self.key, &data_model
-                );
-
                 // Relay from destination to device.
                 let data_model_clone = self.data_model.clone();
                 let key_clone = self.key;
@@ -220,104 +246,179 @@ where
                     destination_read,
                 ));
                 self.destination_read_guard = Some(destination_read_guard);
+
+                data_model.current_segment_space.seg_seq += 1;
+                data_model.send_sequence_space.snd_nxt = data_model.current_segment_space.seg_seq;
+                data_model.send_sequence_space.snd_una = data_model.current_segment_space.seg_seq;
+
+                debug!(
+                    ">>>> Tcp connection [{}] in SynReceived status switch to Established status, data_model:\n{:#?}.",
+                    self.key, &data_model
+                );
+
                 Ok(())
             },
             TcpConnectionStatus::Established => {
                 // Process the connection when the connection in Established status
-
                 debug!(
-                    ">>>> Tcp connection [{}] in [Established] status, data_model: {:#?} receive payload:\n{}",
+                    ">>>> Tcp connection [{}] in Established status receive tcp header:\n\n{:#?}\n\nCurrent data_model:\n\n{data_model:#?}\n\nReceive device payload:\n\n{}\n\n",
                     self.key,
-                    &data_model,
+                    tcp_header.to_header(),
                     pretty_hex::pretty_hex(&payload)
                 );
 
-                if data_model.receive_sequence_space.rcv_nxt != tcp_header.sequence_number() {
-                    error!(">>>> Tcp connection [{}] fail to relay device data because of the expecting next receive sequence not match the sequence in tcp header, expect next receive sequence: {}, incoming tcp header sequence: {}", self.key, data_model.receive_sequence_space.rcv_nxt, tcp_header.sequence_number());
+                if data_model.current_segment_space.seg_seq != tcp_header.acknowledgment_number() {
+                    debug!(">>>> Tcp connection [{}] fail to relay device data because of the current sequence not match the acknowledgment in tcp header, expect sequence: {}, incoming tcp header acknowledgment: {}", self.key, data_model.current_segment_space.seg_seq , tcp_header.acknowledgment_number());
+                    self.close_connection(true).await;
                     return Err(anyhow!(
-                       "Tcp connection [{}] fail to relay device data because of the expecting next receive sequence not match the sequence in tcp header, expect next receive sequence: {}, incoming tcp header sequence: {}", self.key, data_model.receive_sequence_space.rcv_nxt, tcp_header.sequence_number()
+                       "Tcp connection [{}] fail to relay device data because of the current sequence not match the acknowledgment in tcp header, expect sequence: {}, incoming tcp header acknowledgment: {}", self.key, data_model.current_segment_space.seg_seq , tcp_header.acknowledgment_number()
                     ));
                 }
+
+                if data_model.current_segment_space.seg_ack != tcp_header.sequence_number() {
+                    debug!(">>>> Tcp connection [{}] fail to relay device data because of the current acknowledgment not match the sequence in tcp header, expect acknowledgment: {}, incoming tcp header sequence: {}", self.key, data_model.current_segment_space.seg_ack , tcp_header.sequence_number());
+                    self.close_connection(true).await;
+                    return Err(anyhow!(
+                       "Tcp connection [{}] fail to relay device data because of the current acknowledgment not match the sequence in tcp header, expect acknowledgment: {}, incoming tcp header sequence: {}", self.key, data_model.current_segment_space.seg_ack , tcp_header.sequence_number()
+                    ));
+                }
+
                 // Relay from device to destination.
                 let relay_data_length = payload.len();
                 let device_data_length: u32 = match relay_data_length.try_into() {
                     Ok(relay_data_length) => relay_data_length,
                     Err(e) => {
-                        error!(
+                        debug!(
                             ">>>> Tcp connection [{}] fail convert relay data length to u32 because of error: {e:?}",
                             self.key
                         );
+                        self.close_connection(true).await;
                         return Err(anyhow!("Tcp connection [{}] fail convert relay data length to u32 because of error.", self.key));
                     },
                 };
                 let Some(destination_write) = self.destination_write.as_mut() else{
-                    error!(
+                    debug!(
                             ">>>> Tcp connection [{}] fail to relay device data to destination because of the destination write not exist.",
                             self.key
                         );
+                    self.close_connection(true).await;
                     return Err(anyhow!("Tcp connection [{}] fail to relay device data to destination because of the destination write not exist.", self.key));
                 };
                 if let Err(e) = destination_write.write(payload).await {
-                    error!(
+                    debug!(
                         ">>>> Tcp connection [{}] fail to write relay tcp payload to destination because of error: {e:?}",
                         self.key
                     );
+                    self.close_connection(true).await;
                     return Err(anyhow!(
                         "Tcp connection [{}] fail to write relay tcp payload to destination because of error: {e:?}",
                         self.key
                     ));
                 };
                 if let Err(e) = destination_write.flush().await {
-                    error!(
+                    debug!(
                         ">>>> Tcp connection [{}] fail to flush relay tcp payload to destination because of error: {e:?}",
                         self.key
                     );
+                    self.close_connection(true).await;
                     return Err(anyhow!(
                         ">>>> Tcp connection [{}] fail to flush relay tcp payload to destination because of error: {e:?}",
                         self.key
                     ));
                 };
 
-                data_model.send_sequence_space.snd_una += device_data_length;
-                data_model.receive_sequence_space.rcv_nxt += device_data_length;
+                data_model.current_segment_space.seg_ack += device_data_length;
+                data_model.receive_sequence_space.rcv_nxt = data_model.current_segment_space.seg_ack;
                 send_ack_to_device(self.key, &data_model, self.device_output_stream.clone(), None).await?;
 
                 Ok(())
             },
             TcpConnectionStatus::FinWait1 => {
-                let mut data_model_write = self.data_model.write().await;
-                if tcp_header.ack() && data_model_write.receive_sequence_space.rcv_nxt != tcp_header.sequence_number() {
-                    error!(">>>> Tcp connection [{}] in FinWait1 status, but can not close connection because of sequence number not match, expect sequence number: {}", self.key,  data_model_write.receive_sequence_space.rcv_nxt);
-                    return Err(anyhow!(">>>> Tcp connection [{}] in FinWait1 status, but can not close connection because of sequence number not match, expect sequence number: {}", self.key,  data_model_write.receive_sequence_space.rcv_nxt));
+                debug!(
+                    ">>>> Tcp connection [{}] in FinWait1 status receive tcp header:\n\n{:#?}\n\nCurrent data_model:\n\n{data_model:#?}",
+                    self.key,
+                    tcp_header.to_header(),
+                );
+
+                if tcp_header.ack() && data_model.current_segment_space.seg_ack != tcp_header.sequence_number() {
+                    debug!(">>>> Tcp connection [{}] in FinWait1 status, but can not close connection because of sequence number not match, expect sequence number: {}", self.key,  data_model.receive_sequence_space.rcv_nxt);
+                    self.close_connection(true).await;
+                    return Err(anyhow!(">>>> Tcp connection [{}] in FinWait1 status, but can not close connection because of sequence number not match, expect sequence number: {}", self.key,  data_model.receive_sequence_space.rcv_nxt));
                 }
 
-                data_model_write.status = TcpConnectionStatus::FinWait2;
-                debug!(">>>> Tcp connection [{}] in FinWait1 status, receive ack for fin", self.key);
+                if let Err(e) = send_fin_ack_to_device(self.key, &data_model, self.device_output_stream.clone()).await {
+                    debug!(">>>> Tcp connection [{}] fail to send fin ack to device because of error: {e:?}", self.key,);
+                    self.close_connection(true).await;
+                    return Err(anyhow!("Tcp connection [{}] fail to send fin ack to device because of error: {e:?}", self.key));
+                }
+                data_model.status = TcpConnectionStatus::FinWait2;
+                data_model.current_segment_space.seg_seq += 1;
+                data_model.receive_sequence_space.rcv_nxt += 1;
+                debug!(
+                    ">>>> Tcp connection [{}] in FinWait1 status switch to FinWait2 status, receive ack for fin.\n\nCurrent data_model:\n\n{data_model:#?}",
+                    self.key
+                );
                 Ok(())
             },
             TcpConnectionStatus::FinWait2 => {
-                if tcp_header.ack() && tcp_header.fin() && data_model.receive_sequence_space.rcv_nxt != tcp_header.sequence_number() {
-                    error!(">>>> Tcp connection [{}] in FinWait2 status, but can not close connection because of sequence number not match, expect sequence number: {}", self.key, data_model.receive_sequence_space.rcv_nxt);
+                debug!(
+                    ">>>> Tcp connection [{}] in FinWait2 status receive tcp header:\n\n{:#?}\n\nCurrent data_model:\n\n{data_model:#?}",
+                    self.key,
+                    tcp_header.to_header(),
+                );
+                if tcp_header.ack() && !tcp_header.fin() && data_model.current_segment_space.seg_ack != tcp_header.sequence_number() {
+                    debug!(">>>> Tcp connection [{}] in FinWait2 status, but can not close connection because of sequence number not match, expect sequence number: {}", self.key, data_model.receive_sequence_space.rcv_nxt);
+                    self.close_connection(true).await;
                     return Err(anyhow!(">>>> Tcp connection [{}] in FinWait2 status, but can not close connection because of sequence number not match, expect sequence number: {}", self.key, data_model.receive_sequence_space.rcv_nxt));
                 }
 
-                send_ack_to_device(self.key, &data_model, self.device_output_stream.clone(), None).await?;
-
                 data_model.status = TcpConnectionStatus::TimeWait;
-                debug!(">>>> Tcp connection [{}] in FinWait2 status, receive ack for fin", self.key);
+                debug!(
+                    ">>>> Tcp connection [{}] in FinWait2 status switch to TimeWait status, receive ack for fin.\n\nCurrent data_model:\n\n{data_model:#?}",
+                    self.key
+                );
 
                 Ok(())
             },
             TcpConnectionStatus::TimeWait => {
-                send_rst_to_device(self.key, &data_model, self.device_output_stream.clone()).await?;
-                data_model.status = TcpConnectionStatus::Closed;
+                debug!(
+                    ">>>> Tcp connection [{}] in TimeWait status receive tcp header:\n\n{:#?}\n\nCurrent data_model:\n\n{data_model:#?}",
+                    self.key,
+                    tcp_header.to_header(),
+                );
+                self.close_connection(true).await;
+                Ok(())
+            },
+            TcpConnectionStatus::CloseWait => {
+                debug!(
+                    ">>>> Tcp connection [{}] in CloseWait status receive tcp header:\n\n{:#?}\n\nCurrent data_model:\n\n{data_model:#?}",
+                    self.key,
+                    tcp_header.to_header(),
+                );
+                Ok(())
+            },
+            TcpConnectionStatus::LastAck => {
+                debug!(
+                    ">>>> Tcp connection [{}] in LastAck status receive tcp header:\n\n{:#?}\n\nCurrent data_model:\n\n{data_model:#?}",
+                    self.key,
+                    tcp_header.to_header(),
+                );
                 Ok(())
             },
             TcpConnectionStatus::Closed => todo!(),
             TcpConnectionStatus::Closing => todo!(),
             TcpConnectionStatus::SynSent => todo!(),
-            TcpConnectionStatus::CloseWait => todo!(),
-            TcpConnectionStatus::LastAck => todo!(),
+        }
+    }
+}
+
+impl<T> Drop for TcpConnection<'_, T>
+where
+    T: AsyncWrite + Unpin + Send,
+{
+    fn drop(&mut self) {
+        if let Some(ref destination_read_guard) = self.destination_read_guard {
+            destination_read_guard.abort();
         }
     }
 }
@@ -336,19 +437,54 @@ async fn send_syn_ack_to_device<T: AsyncWrite + Unpin + Send>(
         .ack(data_model.current_segment_space.seg_ack);
     let mut sync_ack_packet_bytes = Vec::with_capacity(sync_ack_tcp_packet.size(0));
     if let Err(e) = sync_ack_tcp_packet.write(&mut sync_ack_packet_bytes, &[0u8; 0]) {
-        error!("<<<< Fail to generate sync ack packet because of error: {e:?}");
+        debug!("<<<< Fail to generate sync ack packet because of error: {e:?}");
         return Err(anyhow!("Fail to generate sync ack packet because of error"));
     };
 
     let mut device_output_stream = device_output_stream.lock().await;
     if let Err(e) = device_output_stream.write(sync_ack_packet_bytes.as_ref()).await {
-        error!("<<<< Fail to write sync ack packet to device because of error: {e:?}");
+        debug!("<<<< Fail to write sync ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write sync ack packet to device because of error"));
     };
     if let Err(e) = device_output_stream.flush().await {
-        error!("<<<< Fail to flush sync ack packet to device because of error: {e:?}");
+        debug!("<<<< Fail to flush sync ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write sync ack packet to device because of error"));
     };
+    debug!(
+        "<<<< Tcp connection [{}] write syn+ack to device, current data_model:\n{:#?}\n\n",
+        key, &data_model
+    );
+    Ok(())
+}
+
+async fn send_fin_ack_to_device<T: AsyncWrite + Unpin + Send>(
+    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_output_stream: Arc<Mutex<T>>,
+) -> Result<()> {
+    let rst_ack_tcp_packet = PacketBuilder::ipv4(key.destination_address.octets(), key.source_address.octets(), IP_PACKET_TTL)
+        .tcp(
+            key.destination_port,
+            key.source_port,
+            data_model.current_segment_space.seg_seq,
+            data_model.current_segment_space.seg_wnd,
+        )
+        .fin()
+        .ack(data_model.current_segment_space.seg_ack);
+    let mut rst_ack_packet_bytes = Vec::with_capacity(rst_ack_tcp_packet.size(0));
+    if let Err(e) = rst_ack_tcp_packet.write(&mut rst_ack_packet_bytes, &[0u8; 0]) {
+        debug!("<<<< Fail to generate fin ack packet because of error: {e:?}");
+        return Err(anyhow!("Fail to generate rst ack packet because of error"));
+    };
+
+    let mut device_output_stream = device_output_stream.lock().await;
+    if let Err(e) = device_output_stream.write(rst_ack_packet_bytes.as_ref()).await {
+        debug!("<<<< Fail to write fin ack packet to device because of error: {e:?}");
+        return Err(anyhow!("Fail to write rst ack packet to device because of error"));
+    };
+    if let Err(e) = device_output_stream.flush().await {
+        debug!("<<<< Fail to flush fin ack packet to device because of error: {e:?}");
+        return Err(anyhow!("Fail to write rst ack packet to device because of error"));
+    };
+    debug!("<<<< Tcp connection [{}] write fin to device, current data_model:\n{:#?}\n\n", key, &data_model);
     Ok(())
 }
 
@@ -366,19 +502,20 @@ async fn send_rst_to_device<T: AsyncWrite + Unpin + Send>(
         .ack(data_model.current_segment_space.seg_ack);
     let mut rst_ack_packet_bytes = Vec::with_capacity(rst_ack_tcp_packet.size(0));
     if let Err(e) = rst_ack_tcp_packet.write(&mut rst_ack_packet_bytes, &[0u8; 0]) {
-        error!("<<<< Fail to generate rst ack packet because of error: {e:?}");
+        debug!("<<<< Fail to generate rst ack packet because of error: {e:?}");
         return Err(anyhow!("Fail to generate rst ack packet because of error"));
     };
 
     let mut device_output_stream = device_output_stream.lock().await;
     if let Err(e) = device_output_stream.write(rst_ack_packet_bytes.as_ref()).await {
-        error!("<<<< Fail to write rst ack packet to device because of error: {e:?}");
+        debug!("<<<< Fail to write rst ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write rst ack packet to device because of error"));
     };
     if let Err(e) = device_output_stream.flush().await {
-        error!("<<<< Fail to flush rst ack packet to device because of error: {e:?}");
+        debug!("<<<< Fail to flush rst ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write rst ack packet to device because of error"));
     };
+    debug!("<<<< Tcp connection [{}] write rst to device, current data_model:\n{:#?}\n\n", key, &data_model);
     Ok(())
 }
 
@@ -405,19 +542,26 @@ async fn send_ack_to_device<T: AsyncWrite + Unpin + Send>(
         &[0u8; 0]
     };
     if let Err(e) = ack_tcp_packet.write(&mut ack_packet_bytes, payload) {
-        error!("<<<< Fail to generate sync ack packet because of error: {e:?}");
+        debug!("<<<< Fail to generate sync ack packet because of error: {e:?}");
         return Err(anyhow!("Fail to generate sync ack packet because of error"));
     };
 
     let mut device_output_stream = device_output_stream.lock().await;
     if let Err(e) = device_output_stream.write(ack_packet_bytes.as_ref()).await {
-        error!("<<<< Fail to write sync ack packet to device because of error: {e:?}");
+        debug!("<<<< Fail to write sync ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write sync ack packet to device because of error"));
     };
     if let Err(e) = device_output_stream.flush().await {
-        error!("<<<< Fail to flush sync ack packet to device because of error: {e:?}");
+        debug!("<<<< Fail to flush sync ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write sync ack packet to device because of error"));
     };
+
+    debug!(
+        "<<<< Tcp connection [{}] ack to device, current data_model:\n{:#?}\n\ndestination payload:\n\n{}\n\n",
+        key,
+        &data_model,
+        pretty_hex::pretty_hex(&payload)
+    );
     Ok(())
 }
 
@@ -431,42 +575,23 @@ async fn start_read_destination<T: AsyncWrite + Unpin + Send>(
             Ok(0) => {
                 let mut data_model = data_model.write().await;
 
-                debug!("<<<< Tcp connection [{key}] read destination data complete, data_model: {data_model:?}");
+                debug!("<<<< Tcp connection [{key}] read destination data complete send fin to device, data_model:\n\n{data_model:#?}\n\n");
 
                 // Close the connection activally when read destination complete
-                let fin_tcp_packet = PacketBuilder::ipv4(key.destination_address.octets(), key.source_address.octets(), IP_PACKET_TTL)
-                    .tcp(
-                        key.destination_port,
-                        key.source_port,
-                        data_model.send_sequence_space.snd_nxt,
-                        data_model.send_sequence_space.snd_wnd,
-                    )
-                    .fin()
-                    .ack(data_model.receive_sequence_space.rcv_nxt);
 
-                let mut fin_tcp_packet_bytes = Vec::with_capacity(fin_tcp_packet.size(0));
-                if let Err(e) = fin_tcp_packet.write(&mut fin_tcp_packet_bytes, &[0; 0]) {
-                    error!("<<<< Tcp connection [{key}] fail to generate fin packet because of error: {e:?}");
-                    return Err(anyhow!("Tcp connection [{key}] fail to generate fin packet because of error"));
-                };
-                let mut device_output_stream = device_output_stream.lock().await;
-                if let Err(e) = device_output_stream.write(&fin_tcp_packet_bytes).await {
-                    error!("<<<< Tcp connection [{key}] fail to write fin packet to device because of error: {e:?}");
-                    return Err(anyhow!("Tcp connection [{key}] fail to write fin packet to device because of error"));
-                };
-                if let Err(e) = device_output_stream.flush().await {
-                    error!("<<<< Tcp connection [{key}] fail to flush fin packet to device because of error: {e:?}");
-                    return Err(anyhow!("Tcp connection [{key}] fail to flush fin packet to device because of error"));
+                if let Err(e) = send_fin_ack_to_device(key, &data_model, device_output_stream).await {
+                    debug!("<<<< Tcp connection [{key}] fail to send fin ack packet to device because of error: {e:?}");
+                    return Err(anyhow!("Tcp connection [{key}] fail to send fin ack packet to device because of error"));
                 };
 
                 data_model.status = TcpConnectionStatus::FinWait1;
-                data_model.receive_sequence_space.rcv_nxt += 1;
+
                 debug!("<<<< Tcp connection [{key}] read destination data complete, switch to FinWait1 status.");
                 return Ok(());
             },
             Ok(destination_read_data_size) => destination_read_data_size,
             Err(e) => {
-                error!("<<<< Tcp connection [{key}] fail to read destination data because of error: {e:?}");
+                debug!("<<<< Tcp connection [{key}] fail to read destination data because of error: {e:?}");
                 return Err::<(), anyhow::Error>(anyhow!(e));
             },
         };
@@ -481,18 +606,19 @@ async fn start_read_destination<T: AsyncWrite + Unpin + Send>(
         )
         .await
         {
-            error!("<<<< Tcp connection [{key}] fail to send ack to device because of error: {e:?}");
+            debug!("<<<< Tcp connection [{key}] fail to send ack to device because of error: {e:?}");
             return Err(anyhow!("Tcp connection [{key}] fail to send ack to device because of error"));
         };
 
         let destination_read_data_size: u32 = match destination_read_data_size.try_into() {
             Ok(size) => size,
             Err(e) => {
-                error!("<<<< Tcp connection [{key}] fail to convert destination read data size because of error: {e:?}");
+                debug!("<<<< Tcp connection [{key}] fail to convert destination read data size because of error: {e:?}");
                 return Err(anyhow!("Tcp connection [{key}] fail to convert destination read data size because of error"));
             },
         };
-
+        data_model.current_segment_space.seg_seq += destination_read_data_size;
         data_model.send_sequence_space.snd_nxt += destination_read_data_size;
+        data_model.current_segment_space.seq_len = destination_read_data_size;
     }
 }

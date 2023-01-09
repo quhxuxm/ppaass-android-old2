@@ -24,7 +24,7 @@ use jni::{
     objects::{JClass, JObject, JString, JValue},
     sys::jint,
 };
-use log::{debug, error, info, trace, Level};
+use log::{debug, info, trace, Level};
 use tokio::{
     fs::File as TokioAsyncFile,
     io::AsyncReadExt,
@@ -73,14 +73,14 @@ pub fn protect_socket(action_key: impl AsRef<str>, jni_env: JNIEnv, vpn_service_
     let protect_result = match protect_result {
         Ok(protect_result) => protect_result,
         Err(e) => {
-            error!("Action of [{action_key}] fail to protect socket because of error: {e:?}");
+            debug!("Action of [{action_key}] fail to protect socket because of error: {e:?}");
             return Err(anyhow::anyhow!("Fail to protect socket"));
         },
     };
     let protect_result = match protect_result.z() {
         Ok(protect_result) => protect_result,
         Err(e) => {
-            error!("Action of [{action_key}] fail to convert protect socket result because of error: {e:?}");
+            debug!("Action of [{action_key}] fail to convert protect socket result because of error: {e:?}");
             return Err(anyhow::anyhow!("Fail to convert protect socket result"));
         },
     };
@@ -95,8 +95,15 @@ pub fn protect_socket(action_key: impl AsRef<str>, jni_env: JNIEnv, vpn_service_
 ///
 /// This function should not be called before the horsemen are ready.
 #[no_mangle]
+pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_initLog(_jni_env: JNIEnv, _class: JClass) {
+    android_logger::init_once(Config::default().with_tag("ppaass-rust").with_min_level(Level::Debug));
+}
+
+/// # Safety
+///
+/// This function should not be called before the horsemen are ready.
+#[no_mangle]
 pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni_env: JNIEnv, _class: JClass, device_fd: jint, vpn_service_java_obj: JObject) {
-    android_logger::init_once(Config::default().with_min_level(Level::Debug).with_tag("PPAASS-RUST"));
     let mut vpn_handler_runtime_builder = TokioRuntimeBuilder::new_multi_thread();
     vpn_handler_runtime_builder
         .worker_threads(32)
@@ -105,33 +112,33 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
     let vpn_handler_tuntime = match vpn_handler_runtime_builder.build() {
         Ok(vpn_handler_tuntime) => vpn_handler_tuntime,
         Err(e) => {
-            error!("Fail to create vpn handler runtime because of error: {e:?}");
+            debug!("Fail to create vpn handler runtime because of error: {e:?}");
             panic!("Fail to create vpn handler runtime because of error: {e:?}");
         },
     };
 
     vpn_handler_tuntime.block_on(async move {
         info!("Start vpn handler runtime success.");
-        let mut tcp_connection_repository = HashMap::<TcpConnectionKey, TcpConnection<'_, TokioAsyncFile>>::new();
+        let mut tcp_connection_repository = Arc::new(RwLock::new(HashMap::<TcpConnectionKey, TcpConnection<'_, TokioAsyncFile>>::new()));
         let mut device_input_stream = unsafe { TokioAsyncFile::from_raw_fd(device_fd) };
         let device_output_stream = Arc::new(Mutex::new(unsafe { TokioAsyncFile::from_raw_fd(device_fd) }));
         loop {
             let mut vpn_data_buf = [0u8; 1024 * 32];
             let vpn_packet_buf = match device_input_stream.read(&mut vpn_data_buf).await {
                 Ok(0) => {
-                    error!("Nothing to read from vpn.");
+                    debug!("Nothing to read from vpn.");
                     continue;
                 },
                 Ok(size) => &vpn_data_buf[0..size],
                 Err(e) => {
-                    error!("Fail to read input bytes from vpn because of error: {e:?}");
+                    debug!("Fail to read input bytes from vpn because of error: {e:?}");
                     return;
                 },
             };
             let vpn_packet = match etherparse::SlicedPacket::from_ip(vpn_packet_buf) {
                 Ok(vpn_packet) => vpn_packet,
                 Err(e) => {
-                    error!("Fail to read ip packet from vpn because of error: {e:?}");
+                    debug!("Fail to read ip packet from vpn because of error: {e:?}");
                     continue;
                 },
             };
@@ -188,7 +195,7 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
                         device_output_stream: device_output_stream.clone(),
                     };
                     if let Err(e) = handle_udp_packet(udp_packet_info).await {
-                        error!("Fail to handle udp packet [{source_address}:{source_port}->{destination_address}:{destination_port}] because of error: {e:?}")
+                        debug!("Fail to handle udp packet [{source_address}:{source_port}->{destination_address}:{destination_port}] because of error: {e:?}")
                     };
                     continue;
                 },
@@ -199,21 +206,28 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
                         source_address: ipv4_header.source_addr(),
                         source_port: tcp_header.source_port(),
                     };
-                    match tcp_connection_repository.entry(key) {
+                    let mut tcp_connection_repository_write = tcp_connection_repository.write().await;
+                    match tcp_connection_repository_write.entry(key) {
                         Occupied(mut entry) => {
                             debug!("Get existing tcp connection: {key}");
                             let tcp_connection = entry.get_mut();
                             if let Err(e) = tcp_connection.process(ipv4_header, tcp_header, vpn_packet.payload).await {
-                                error!("Fail to process tcp connection [{key}] because of error: {e:?}");
+                                debug!("Fail to process tcp connection [{key}] because of error: {e:?}");
                             };
                             continue;
                         },
                         Vacant(entry) => {
                             debug!("Create new tcp connection: {key}");
-                            let tcp_connection = TcpConnection::new(key, device_output_stream.clone(), jni_env, vpn_service_java_obj);
+                            let tcp_connection = TcpConnection::new(
+                                key,
+                                device_output_stream.clone(),
+                                jni_env,
+                                vpn_service_java_obj,
+                                tcp_connection_repository.clone(),
+                            );
                             let tcp_connection = entry.insert(tcp_connection);
                             if let Err(e) = tcp_connection.process(ipv4_header, tcp_header, vpn_packet.payload).await {
-                                error!("Fail to process tcp connection [{key}] because of error: {e:?}");
+                                debug!("Fail to process tcp connection [{key}] because of error: {e:?}");
                             };
                             continue;
                         },
