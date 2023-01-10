@@ -26,12 +26,12 @@ pub(crate) enum TcpConnectionStatus {
     #[default]
     Listen,
     Closed,
-    SynSent,
+
     SynReceived,
     Established,
     FinWait1,
     FinWait2,
-    Closing,
+
     CloseWait,
     LastAck,
     TimeWait,
@@ -42,13 +42,13 @@ impl Display for TcpConnectionStatus {
         match *self {
             TcpConnectionStatus::Closed => write!(f, "CLOSED"),
             TcpConnectionStatus::Listen => write!(f, "LISTEN"),
-            TcpConnectionStatus::SynSent => write!(f, "SYN-SENT"),
+
             TcpConnectionStatus::SynReceived => write!(f, "SYN-RECEIVED"),
             TcpConnectionStatus::Established => write!(f, "ESTABLISHED"),
             TcpConnectionStatus::FinWait1 => write!(f, "FIN-WAIT-1"),
             TcpConnectionStatus::FinWait2 => write!(f, "FIN-WAIT-2"),
             TcpConnectionStatus::CloseWait => write!(f, "CLOSE-WAIT"),
-            TcpConnectionStatus::Closing => write!(f, "CLOSING"),
+
             TcpConnectionStatus::LastAck => write!(f, "LAST-ACK"),
             TcpConnectionStatus::TimeWait => write!(f, "TIME-WAIT"),
         }
