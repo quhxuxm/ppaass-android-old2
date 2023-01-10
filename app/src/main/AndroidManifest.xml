@@ -8,7 +8,6 @@
             android:roundIcon="@mipmap/ic_launcher_round"
             android:supportsRtl="true"
             android:theme="@style/Theme.PpaassAgent"
-            android:name=".PpaassVpnApplication"
     >
         <activity
                 android:name=".activity.MainActivity"

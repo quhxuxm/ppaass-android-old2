@@ -1,44 +1,25 @@
 package com.ppaass.agent.rust.activity;
 
-import android.content.Context;
 import android.content.Intent;
 import android.net.VpnService;
 import android.os.Bundle;
 import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
-import com.ppaass.agent.rust.PpaassVpnApplication;
 import com.ppaass.agent.rust.R;
-import com.ppaass.agent.rust.jni.ExampleNativeObject;
 import com.ppaass.agent.rust.jni.RustLibrary;
 import com.ppaass.agent.rust.service.PpaassVpnService;
-import com.ppaass.agent.rust.service.handler.dns.DnsRepository;
 
 public class MainActivity extends AppCompatActivity {
     private static final int VPN_SERVICE_REQUEST_CODE = 1;
 
 
-    private void testJniCode() {
-        String jniOutputMessage = RustLibrary.handleInputString("QUHAO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!NATIVE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        Log.e(MainActivity.class.getName(), jniOutputMessage);
-        ExampleNativeObject jniInputObject = new ExampleNativeObject("EXP: QUHAO", 41);
-        ExampleNativeObject jniOutputObject = RustLibrary.handleInputObject(jniInputObject);
-        Log.e(MainActivity.class.getName(), jniOutputObject.toString());
-    }
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        this.testJniCode();
-        DnsRepository.INSTANCE.init(this.getSharedPreferences("PpaassVpnDns", Context.MODE_PRIVATE));
         var startVpnButton = this.findViewById(R.id.startButton);
         startVpnButton.setOnClickListener(view -> {
-            PpaassVpnApplication application = (PpaassVpnApplication) this.getApplication();
-            Log.d(MainActivity.class.getName(), "Click start button, going to start VPN service");
-            if (application.isVpnStarted()) {
-                return;
-            }
             var prepareVpnIntent = VpnService.prepare(this);
             if (prepareVpnIntent != null) {
                 startActivityForResult(prepareVpnIntent, VPN_SERVICE_REQUEST_CODE);
@@ -50,15 +31,14 @@ public class MainActivity extends AppCompatActivity {
         });
         var stopVpnButton = this.findViewById(R.id.stopButton);
         stopVpnButton.setOnClickListener(view -> {
-            PpaassVpnApplication application = (PpaassVpnApplication) this.getApplication();
             var stopVpnServiceIntent = new Intent(MainActivity.this, PpaassVpnService.class);
             stopService(stopVpnServiceIntent);
-            application.stopVpn();
+            RustLibrary.stopVpn();
             Log.d(MainActivity.class.getName(), "Click stop button, going to stop VPN service");
         });
         var clearDnsButton = this.findViewById(R.id.clearDnsButton);
         clearDnsButton.setOnClickListener(view -> {
-            DnsRepository.INSTANCE.clearAll();
+
         });
 //        var chooseAppButton = this.findViewById(R.id.chooseApplication);
 //        chooseAppButton.setOnClickListener(view -> {

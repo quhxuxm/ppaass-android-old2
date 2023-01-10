@@ -6,7 +6,6 @@ import com.ppaass.agent.rust.protocol.message.*;
 import com.ppaass.agent.rust.protocol.message.encryption.PpaassMessagePayloadEncryptionType;
 import com.ppaass.agent.rust.protocol.message.encryption.PpaassMessagePayloadEncryption;
 import com.ppaass.agent.rust.protocol.message.payload.DomainResolveResponsePayload;
-import com.ppaass.agent.rust.util.UUIDUtil;
 import org.junit.Test;
 
 import java.util.Arrays;
