@@ -69,9 +69,8 @@ where
         connection_repository.remove(&self.key);
     }
 
-    pub async fn process<'a>(
-        &mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8], jni_env: JNIEnv<'static>,
-        vpn_service_java_obj: JObject<'static>,
+    pub async fn process<'a, 'j>(
+        &mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8], jni_env: JNIEnv<'j>, vpn_service_java_obj: JObject<'j>,
     ) -> Result<()> {
         let mut data_model = self.data_model.write().await;
 

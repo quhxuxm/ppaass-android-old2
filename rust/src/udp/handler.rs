@@ -37,7 +37,7 @@ where
     pub device_vpn_write: Arc<Mutex<T>>,
 }
 
-pub(crate) async fn handle_udp_packet<T>(udp_packet_info: UdpPacketInfo<T>, jni_env: JNIEnv<'static>, vpn_service_java_obj: JObject<'static>) -> Result<()>
+pub(crate) async fn handle_udp_packet<'a, T>(udp_packet_info: UdpPacketInfo<T>, jni_env: JNIEnv<'a>, vpn_service_java_obj: JObject<'a>) -> Result<()>
 where
     T: AsyncWrite + Unpin + Send + 'static,
 {

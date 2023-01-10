@@ -71,7 +71,7 @@ mod udp;
 static mut VPN_RUNTIME: OnceCell<Runtime> = OnceCell::new();
 static mut DEVICE_VPN_WRITE: OnceCell<Arc<Mutex<WriteHalf<TokioAsyncFile>>>> = OnceCell::new();
 
-pub fn protect_socket(action_key: impl AsRef<str>, jni_env: JNIEnv<'static>, vpn_service_java_obj: JObject<'static>, socket_fd: i32) -> Result<()> {
+pub fn protect_socket<'a>(action_key: impl AsRef<str>, jni_env: JNIEnv<'a>, vpn_service_java_obj: JObject<'a>, socket_fd: i32) -> Result<()> {
     let action_key = action_key.as_ref();
     let socket_fd_jni_arg = JValue::Int(socket_fd);
     let protect_result = jni_env.call_method(vpn_service_java_obj, "protect", "(I)Z", &[socket_fd_jni_arg]);
@@ -126,9 +126,7 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_stopVpn(_jni
 ///
 /// This function should not be called before the horsemen are ready.
 #[no_mangle]
-pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(
-    jni_env: JNIEnv<'static>, _class: JClass<'static>, device_fd: jint, vpn_service_java_obj: JObject<'static>,
-) {
+pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni_env: JNIEnv, _class: JClass, device_fd: jint, vpn_service_java_obj: JObject) {
     let mut vpn_handler_runtime_builder = TokioRuntimeBuilder::new_multi_thread();
     vpn_handler_runtime_builder
         .worker_threads(32)
