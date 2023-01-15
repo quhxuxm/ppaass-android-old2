@@ -4,14 +4,11 @@ import android.app.Service;
 import android.content.Intent;
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
-import android.system.OsConstants;
 import android.util.Log;
 import com.ppaass.agent.rust.R;
 import com.ppaass.agent.rust.jni.RustLibrary;
-import org.apache.commons.io.IOUtils;
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 
@@ -22,21 +19,28 @@ public class PpaassVpnService extends VpnService {
     private ParcelFileDescriptor vpnFd;
 
     public PpaassVpnService() {
+        this.id = UUID.randomUUID().toString().replace("-", "");
+        Log.i(PpaassVpnService.class.getName(), "Ppaass Vpn create service object: " + this.id);
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        this.id = UUID.randomUUID().toString().replace("-", "");
-        Log.i(PpaassVpnService.class.getName(), "onCreate: " + this.id);
+        Log.i(PpaassVpnService.class.getName(), "Ppaass Vpn service object onCreate: " + this.id);
         var vpnBuilder = new Builder();
         vpnBuilder.addAddress(VPN_ADDRESS, 32).addRoute(VPN_ROUTE, 0)
                 .addDnsServer(IVpnConst.DNS)
-                .setMtu(IVpnConst.MTU)
-                .setBlocking(true);
+                .setMtu(IVpnConst.MTU);
         vpnBuilder.setSession(getString(R.string.app_name));
-        vpnBuilder.allowFamily(OsConstants.AF_INET);
         this.vpnFd = vpnBuilder.establish();
+    }
+
+
+    @Override
+    public boolean stopService(Intent name) {
+        boolean result = super.stopService(name);
+        Log.d(PpaassVpnService.class.getName(), "Ppaass Vpn service object stopped.");
+        return result;
     }
 
     @Override
@@ -44,20 +48,20 @@ public class PpaassVpnService extends VpnService {
         try {
             Executors.newSingleThreadExecutor().execute(() -> {
                 try {
-                    RustLibrary.initLog();
-                    RustLibrary.startVpn(this.vpnFd.detachFd(), this);
+                    int nativeVpnFileDescriptor = vpnFd.detachFd();
+                    Log.d(PpaassVpnService.class.getName(), "Ppaass Vpn native file descriptor: "+nativeVpnFileDescriptor);
+                    RustLibrary.startVpn(nativeVpnFileDescriptor, this);
                 } catch (Exception e) {
-                    Log.e(PpaassVpnService.class.getName(), "Stop PPAASS VPN thread because of exception.", e);
+                    Log.e(PpaassVpnService.class.getName(), "Stop Ppaass Vpn thread because of exception.", e);
                     return;
                 }
-                Log.d(PpaassVpnService.class.getName(), "Stop PPAASS VPN thread normally.");
+                Log.d(PpaassVpnService.class.getName(), "Stop Ppaass Vpn thread normally.");
             });
+            Log.i(PpaassVpnService.class.getName(), "Ppaass Vpn success to start service: " + this.id);
+            return Service.START_STICKY;
         } catch (Exception e) {
-
-            Log.e(PpaassVpnService.class.getName(), "Fail to start service: " + this.id, e);
+            Log.e(PpaassVpnService.class.getName(), "Ppaass Vpn fail to start service: " + this.id, e);
             return Service.START_STICKY;
         }
-        Log.i(PpaassVpnService.class.getName(), "Success to start service: " + this.id);
-        return Service.START_STICKY;
     }
 }

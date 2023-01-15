@@ -22,11 +22,11 @@ public class MainActivity extends AppCompatActivity {
         startVpnButton.setOnClickListener(view -> {
             var prepareVpnIntent = VpnService.prepare(this);
             if (prepareVpnIntent != null) {
-                startActivityForResult(prepareVpnIntent, VPN_SERVICE_REQUEST_CODE);
-                Log.d(MainActivity.class.getName(), "VPN service instance(new) prepared ...");
+                startActivityForResult(prepareVpnIntent, VPN_SERVICE_REQUEST_CODE, savedInstanceState);
+                Log.d(MainActivity.class.getName(), "Ppaass VPN service require initialize ...");
             } else {
-                Log.d(MainActivity.class.getName(), "VPN service instance(existing) prepared ...");
                 onActivityResult(VPN_SERVICE_REQUEST_CODE, RESULT_OK, null);
+                Log.d(MainActivity.class.getName(), "Ppaass VPN service prepared already...");
             }
         });
         var stopVpnButton = this.findViewById(R.id.stopButton);

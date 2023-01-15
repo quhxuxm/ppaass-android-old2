@@ -1,4 +1,5 @@
 use std::{
+    io::Write,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     os::fd::AsRawFd,
     sync::Arc,
@@ -6,15 +7,15 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+
 use etherparse::PacketBuilder;
-use jni::{objects::JObject, JNIEnv};
-use log::debug;
-use tokio::{
-    io::{AsyncWrite, AsyncWriteExt},
-    net::UdpSocket,
-    sync::Mutex,
-    time::timeout,
+
+use jni::{
+    objects::{GlobalRef, JObject},
+    JNIEnv,
 };
+use log::debug;
+use tokio::{net::UdpSocket, sync::Mutex, time::timeout};
 
 use crate::protect_socket;
 use dns_parser::Packet as DnsPacket;
@@ -25,22 +26,16 @@ fn generate_udp_packet_key(source_address: Ipv4Addr, source_port: u16, destinati
     format!("{source_address}:{source_port}->{destination_address}:{destination_port}")
 }
 
-pub(crate) struct UdpPacketInfo<T>
-where
-    T: AsyncWrite + Unpin + Send + 'static,
-{
+pub(crate) struct UdpPacketInfo {
     pub source_address: Ipv4Addr,
     pub source_port: u16,
     pub destination_address: Ipv4Addr,
     pub destination_port: u16,
     pub payload: Vec<u8>,
-    pub device_vpn_write: Arc<Mutex<T>>,
+    pub device_vpn_write: Arc<Mutex<dyn Write + Send + 'static>>,
 }
 
-pub(crate) async fn handle_udp_packet<'a, T>(udp_packet_info: UdpPacketInfo<T>, jni_env: JNIEnv<'a>, vpn_service_java_obj: JObject<'a>) -> Result<()>
-where
-    T: AsyncWrite + Unpin + Send + 'static,
-{
+pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, jni_env: JNIEnv<'a>, vpn_service_java_obj: GlobalRef) -> Result<()> {
     let UdpPacketInfo {
         source_address,
         source_port,
@@ -131,12 +126,13 @@ where
             return Err::<(), anyhow::Error>(anyhow!(e));
         };
         let mut device_vpn_write = device_vpn_write.lock().await;
-        if let Err(e) = device_vpn_write.write(&received_destination_udp_packet_bytes).await {
+
+        debug!(
+            "Udp socket [{udp_packet_key}], begin to write destination udp packet bytes to device, length= {}",
+            received_destination_udp_packet_bytes.len()
+        );
+        if let Err(e) = device_vpn_write.write(&received_destination_udp_packet_bytes) {
             debug!(">>>> Udp socket [{udp_packet_key}] fail to write to device because of error: {e:?}");
-            return Err::<(), anyhow::Error>(anyhow!(e));
-        };
-        if let Err(e) = device_vpn_write.flush().await {
-            debug!(">>>> Udp socket [{udp_packet_key}] fail to flush to device because of error: {e:?}");
             return Err::<(), anyhow::Error>(anyhow!(e));
         };
         Ok(())

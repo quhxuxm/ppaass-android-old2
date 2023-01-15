@@ -4,7 +4,9 @@ use std::{
         hash_map::Entry::{Occupied, Vacant},
         HashMap,
     },
-    os::fd::FromRawFd,
+    fs::File,
+    io::{ErrorKind, Read, Write},
+    os::fd::{FromRawFd, OwnedFd},
     sync::Arc,
 };
 
@@ -14,12 +16,13 @@ use crate::{
 };
 use android_logger::Config;
 use anyhow::Result;
+
 use etherparse::{
     InternetSlice::{Ipv4, Ipv6},
     TransportSlice::{Icmpv4, Icmpv6, Tcp, Udp, Unknown},
 };
 
-use jni::JNIEnv;
+use jni::{objects::GlobalRef, JNIEnv};
 use jni::{
     objects::{JClass, JObject, JValue},
     sys::jint,
@@ -27,9 +30,8 @@ use jni::{
 use log::{debug, trace, Level};
 
 use once_cell::sync::OnceCell;
+
 use tokio::{
-    fs::File as TokioAsyncFile,
-    io::{AsyncReadExt, AsyncWriteExt, WriteHalf},
     runtime::{Builder as TokioRuntimeBuilder, Runtime},
     sync::{Mutex, RwLock},
 };
@@ -69,12 +71,13 @@ mod udp;
 // }
 
 static mut VPN_RUNTIME: OnceCell<Runtime> = OnceCell::new();
-static mut DEVICE_VPN_WRITE: OnceCell<Arc<Mutex<WriteHalf<TokioAsyncFile>>>> = OnceCell::new();
+static mut DEVICE_VPN_WRITE: OnceCell<Arc<Mutex<dyn Write + Send + 'static>>> = OnceCell::new();
+static mut VPN_SERVICE_JAVA_OBJ: OnceCell<GlobalRef> = OnceCell::new();
 
-pub fn protect_socket<'a>(action_key: impl AsRef<str>, jni_env: JNIEnv<'a>, vpn_service_java_obj: JObject<'a>, socket_fd: i32) -> Result<()> {
+pub fn protect_socket(action_key: impl AsRef<str>, jni_env: JNIEnv, vpn_service_java_obj: GlobalRef, socket_fd: i32) -> Result<()> {
     let action_key = action_key.as_ref();
     let socket_fd_jni_arg = JValue::Int(socket_fd);
-    let protect_result = jni_env.call_method(vpn_service_java_obj, "protect", "(I)Z", &[socket_fd_jni_arg]);
+    let protect_result = jni_env.call_method(vpn_service_java_obj.as_obj(), "protect", "(I)Z", &[socket_fd_jni_arg]);
     let protect_result = match protect_result {
         Ok(protect_result) => protect_result,
         Err(e) => {
@@ -100,26 +103,11 @@ pub fn protect_socket<'a>(action_key: impl AsRef<str>, jni_env: JNIEnv<'a>, vpn_
 ///
 /// This function should not be called before the horsemen are ready.
 #[no_mangle]
-pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_initLog(_jni_env: JNIEnv<'static>, _class: JClass<'static>) {
-    android_logger::init_once(Config::default().with_tag("ppaass-rust").with_min_level(Level::Debug));
-}
-
-/// # Safety
-///
-/// This function should not be called before the horsemen are ready.
-#[no_mangle]
-pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_stopVpn(_jni_env: JNIEnv<'static>, _class: JClass<'static>) {
+pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_stopVpn(_jni_env: JNIEnv, _class: JClass) {
     if let Some(runtime) = VPN_RUNTIME.take() {
-        runtime.block_on(async move {
-            if let Some(device_output_stream) = DEVICE_VPN_WRITE.take() {
-                let mut device_output_stream = device_output_stream.blocking_lock_owned();
-                if let Err(e) = device_output_stream.shutdown().await {
-                    debug!(">>>> Fail to shutdown vpn interface because of error: {e:?}");
-                };
-            }
-        });
         runtime.shutdown_background();
     }
+    DEVICE_VPN_WRITE.take();
 }
 
 /// # Safety
@@ -127,6 +115,18 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_stopVpn(_jni
 /// This function should not be called before the horsemen are ready.
 #[no_mangle]
 pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni_env: JNIEnv, _class: JClass, device_fd: jint, vpn_service_java_obj: JObject) {
+    android_logger::init_once(Config::default().with_tag("ppaass-rust").with_min_level(Level::Debug));
+    let vpn_service_java_obj = VPN_SERVICE_JAVA_OBJ.get_or_init(|| {
+        let vpn_service_java_obj = match jni_env.new_global_ref(vpn_service_java_obj) {
+            Ok(vpn_service_java_obj) => vpn_service_java_obj,
+            Err(e) => {
+                debug!(">>>> Fail to create vpn service java object global reference because of error: {e:?}");
+                panic!(">>>> Fail to create vpn service java object global reference because of error: {e:?}");
+            },
+        };
+        vpn_service_java_obj
+    });
+
     let mut vpn_handler_runtime_builder = TokioRuntimeBuilder::new_multi_thread();
     vpn_handler_runtime_builder
         .worker_threads(32)
@@ -142,43 +142,46 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
 
     vpn_handler_runtime.block_on(async move {
         debug!(">>>> Start vpn handler runtime success.");
-        let tcp_connection_repository = Arc::new(RwLock::new(HashMap::<TcpConnectionKey, TcpConnection<_>>::new()));
+        let tcp_connection_repository = Arc::new(RwLock::new(HashMap::<TcpConnectionKey, TcpConnection>::new()));
+        let original_device_vpn_fd = unsafe { OwnedFd::from_raw_fd(device_fd) };
+        let original_device_vpn_file: File = original_device_vpn_fd.into();
 
-        let vpn_device_file = unsafe { TokioAsyncFile::from_raw_fd(device_fd) };
+        debug!(">>>> Vpn file meta data: {:#?}", original_device_vpn_file.metadata());
 
-        debug!(">>>> Vpn file open on: {:?}", vpn_device_file);
-        let (mut device_vpn_read, device_vpn_write) = tokio::io::split(vpn_device_file);
-        let device_vpn_write = DEVICE_VPN_WRITE.get_or_init(|| Arc::new(Mutex::new(device_vpn_write)));
+        let device_vpn_file: Arc<Mutex<File>> = Arc::new(Mutex::new(original_device_vpn_file));
+
+        let device_vpn_write = device_vpn_file.clone();
+        let device_vpn_read = device_vpn_file.clone();
+
+        debug!(">>>> Vpn file open on file descriptor: {:?}", device_fd);
+
+        let device_vpn_write = DEVICE_VPN_WRITE.get_or_init(|| device_vpn_write);
         loop {
-            let mut vpn_data_buf = [0u8; 1024 * 32];
-            let vpn_packet_buf = match device_vpn_read.read(&mut vpn_data_buf).await {
-                Ok(0) => {
-                    debug!(">>>> Nothing to read from vpn.");
-                    let mut device_output_stream = device_vpn_write.lock().await;
-                    if let Err(e) = device_output_stream.shutdown().await {
-                        debug!(">>>> Fail to shutdown device output stream because of error: {e:?}");
-                    };
-                    return;
-                },
-                Ok(size) => &vpn_data_buf[0..size],
-                Err(e) => {
-                    debug!(">>>> Fail to read input bytes from vpn because of error: {e:?}");
-                    let mut device_output_stream = device_vpn_write.lock().await;
-                    if let Err(e) = device_output_stream.shutdown().await {
-                        debug!(">>>> Fail to shutdown device output stream because of error: {e:?}");
-                    };
-                    return;
+            let mut ip_packet_buf = [0u8; 1024 * 64];
+            let mut device_vpn_read = device_vpn_read.lock().await;
+            let ip_packet_buf = match device_vpn_read.read(&mut ip_packet_buf) {
+                Ok(0) => continue,
+                Ok(size) => &ip_packet_buf[..size],
+                Err(e) => match e.kind() {
+                    ErrorKind::WouldBlock => {
+                        continue;
+                    },
+                    _ => {
+                        debug!(">>>> Fail to read input bytes from vpn because of error: {e:?}");
+                        continue;
+                    },
                 },
             };
-            let vpn_packet = match etherparse::SlicedPacket::from_ip(vpn_packet_buf) {
+            drop(device_vpn_read);
+            let ip_packet = match etherparse::SlicedPacket::from_ip(ip_packet_buf) {
                 Ok(vpn_packet) => vpn_packet,
                 Err(e) => {
                     debug!(">>>> Fail to read ip packet from vpn because of error: {e:?}");
                     continue;
                 },
             };
-            trace!(">>>> Read vpn packet: {vpn_packet:?}");
-            let ip_header = match vpn_packet.ip {
+            trace!(">>>> Read vpn packet: {ip_packet:?}");
+            let ip_header = match ip_packet.ip {
                 Some(ip_header) => {
                     trace!(">>>> Vpn packet is ip packet, header: {ip_header:?}");
                     ip_header
@@ -188,7 +191,7 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
                     continue;
                 },
             };
-            let transport = match vpn_packet.transport {
+            let transport = match ip_packet.transport {
                 Some(transport) => transport,
                 None => {
                     trace!(">>>> No transport in the vpn packet, skip and read next");
@@ -213,7 +216,7 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
                     continue;
                 },
                 Udp(udp_header) => {
-                    let udp_payload = vpn_packet.payload.to_vec();
+                    let udp_payload = ip_packet.payload.to_vec();
                     let destination_port = udp_header.destination_port();
                     let destination_address = ipv4_header.destination_addr();
                     let source_port = udp_header.source_port();
@@ -225,10 +228,9 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
                         destination_address,
                         destination_port,
                         payload: udp_payload,
-
                         device_vpn_write: device_vpn_write.clone(),
                     };
-                    if let Err(e) = handle_udp_packet(udp_packet_info, jni_env, vpn_service_java_obj).await {
+                    if let Err(e) = handle_udp_packet(udp_packet_info, jni_env, vpn_service_java_obj.clone()).await {
                         debug!(
                             ">>>> Fail to handle udp packet [{source_address}:{source_port}->{destination_address}:{destination_port}] because of error: {e:?}"
                         )
@@ -248,26 +250,25 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(jni
                             debug!(">>>> Get existing tcp connection: {key}");
                             let tcp_connection = entry.get_mut();
                             if let Err(e) = tcp_connection
-                                .process(ipv4_header, tcp_header, vpn_packet.payload, jni_env, vpn_service_java_obj)
+                                .process(ipv4_header, tcp_header, ip_packet.payload, jni_env, vpn_service_java_obj.clone())
                                 .await
                             {
-                                debug!(">>>> Fail to process tcp connection [{key}] because of error: {e:?}");
+                                debug!(">>>> Fail to process tcp connection [{key}] because of error(existing): {e:?}");
                             };
-                            continue;
                         },
                         Vacant(entry) => {
                             debug!(">>>> Create new tcp connection: {key}");
                             let tcp_connection = TcpConnection::new(key, device_vpn_write.clone(), tcp_connection_repository.clone());
                             let tcp_connection = entry.insert(tcp_connection);
                             if let Err(e) = tcp_connection
-                                .process(ipv4_header, tcp_header, vpn_packet.payload, jni_env, vpn_service_java_obj)
+                                .process(ipv4_header, tcp_header, ip_packet.payload, jni_env, vpn_service_java_obj.clone())
                                 .await
                             {
-                                debug!(">>>> Fail to process tcp connection [{key}] because of error: {e:?}");
+                                debug!(">>>> Fail to process tcp connection [{key}] because of error(new): {e:?}");
                             };
-                            continue;
                         },
                     };
+                    continue;
                 },
                 Unknown(unknown_protocol) => {
                     debug!(">>>> Receive unknown protocol: {unknown_protocol}");

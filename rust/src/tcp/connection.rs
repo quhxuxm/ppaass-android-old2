@@ -1,17 +1,23 @@
 use anyhow::{anyhow, Result};
-use jni::{objects::JObject, JNIEnv};
+use bytes::BytesMut;
+use futures::SinkExt;
+use jni::{
+    objects::{GlobalRef, JObject},
+    JNIEnv,
+};
 use log::debug;
 use rand::random;
 
 use std::{
     collections::HashMap,
+    io::Write,
     net::{SocketAddr, SocketAddrV4},
     os::fd::AsRawFd,
     sync::Arc,
     time::Duration,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpSocket,
@@ -30,24 +36,19 @@ use super::model::{TcpConnectionDataModel, TcpConnectionKey, TcpConnectionStatus
 const IP_PACKET_TTL: u8 = 64;
 const WINDOW_SIZE: u16 = 65535;
 
-pub(crate) struct TcpConnection<T>
-where
-    T: AsyncWrite + Unpin + Send + 'static,
-{
+pub(crate) struct TcpConnection {
     key: TcpConnectionKey,
     data_model: Arc<RwLock<TcpConnectionDataModel>>,
-    device_vpn_write: Arc<Mutex<T>>,
+    device_vpn_write: Arc<Mutex<dyn Write + Send + 'static>>,
     destination_write: Option<OwnedWriteHalf>,
     destination_read_guard: Option<JoinHandle<Result<()>>>,
-    connection_repository: Arc<RwLock<HashMap<TcpConnectionKey, TcpConnection<T>>>>,
+    connection_repository: Arc<RwLock<HashMap<TcpConnectionKey, TcpConnection>>>,
 }
 
-impl<T> TcpConnection<T>
-where
-    T: AsyncWrite + Unpin + Send + 'static,
-{
+impl TcpConnection {
     pub fn new(
-        key: TcpConnectionKey, device_vpn_write: Arc<Mutex<T>>, connection_repository: Arc<RwLock<HashMap<TcpConnectionKey, TcpConnection<T>>>>,
+        key: TcpConnectionKey, device_vpn_write: Arc<Mutex<dyn Write + Send + 'static>>,
+        connection_repository: Arc<RwLock<HashMap<TcpConnectionKey, TcpConnection>>>,
     ) -> Self {
         TcpConnection {
             key,
@@ -70,7 +71,7 @@ where
     }
 
     pub async fn process<'a, 'j>(
-        &mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8], jni_env: JNIEnv<'j>, vpn_service_java_obj: JObject<'j>,
+        &mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8], jni_env: JNIEnv<'j>, vpn_service_java_obj: GlobalRef,
     ) -> Result<()> {
         let mut data_model = self.data_model.write().await;
 
@@ -213,7 +214,7 @@ where
                     },
                 };
 
-                let destination_tcp_stream = match timeout(Duration::from_secs(20), destination_tcp_socket.connect(destination_socket_address)).await {
+                let destination_tcp_stream = match timeout(Duration::from_secs(5), destination_tcp_socket.connect(destination_socket_address)).await {
                     Err(_) => {
                         debug!(">>>> Tcp connection [{}] fail connect to destination because of timeout.", self.key);
                         self.close_connection(&data_model, true).await;
@@ -480,10 +481,7 @@ where
     }
 }
 
-impl<T> Drop for TcpConnection<T>
-where
-    T: AsyncWrite + Unpin + Send,
-{
+impl Drop for TcpConnection {
     fn drop(&mut self) {
         if let Some(ref destination_read_guard) = self.destination_read_guard {
             destination_read_guard.abort();
@@ -491,8 +489,8 @@ where
     }
 }
 
-async fn send_syn_ack_to_device<T: AsyncWrite + Unpin + Send>(
-    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_output_stream: Arc<Mutex<T>>,
+async fn send_syn_ack_to_device(
+    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_vpn_write: Arc<Mutex<dyn Write + Send + 'static>>,
 ) -> Result<()> {
     let sync_ack_tcp_packet = PacketBuilder::ipv4(key.destination_address.octets(), key.source_address.octets(), IP_PACKET_TTL)
         .tcp(
@@ -509,16 +507,16 @@ async fn send_syn_ack_to_device<T: AsyncWrite + Unpin + Send>(
         return Err(anyhow!("Fail to generate sync ack packet because of error"));
     };
 
-    let mut device_output_stream = device_output_stream.lock().await;
+    let mut device_vpn_write = device_vpn_write.lock().await;
 
-    if let Err(e) = device_output_stream.write(sync_ack_packet_bytes.as_ref()).await {
+    if let Err(e) = device_vpn_write.write(&sync_ack_packet_bytes) {
         debug!("<<<< Tcp connection [{key}] fail to write sync ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write sync ack packet to device because of error"));
     };
-    if let Err(e) = device_output_stream.flush().await {
-        debug!("<<<< Tcp connection [{key}] fail to flush sync ack packet to device because of error: {e:?}");
-        return Err(anyhow!("Fail to write sync ack packet to device because of error"));
-    };
+    // if let Err(e) = device_output_stream.flush().await {
+    //     debug!("<<<< Tcp connection [{key}] fail to flush sync ack packet to device because of error: {e:?}");
+    //     return Err(anyhow!("Fail to write sync ack packet to device because of error"));
+    // };
     debug!(
         "<<<< Tcp connection [{}] write syn+ack to device, current data_model:\n{:#?}\n\n",
         key, &data_model
@@ -526,8 +524,8 @@ async fn send_syn_ack_to_device<T: AsyncWrite + Unpin + Send>(
     Ok(())
 }
 
-async fn send_fin_ack_to_device<T: AsyncWrite + Unpin + Send>(
-    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_output_stream: Arc<Mutex<T>>,
+async fn send_fin_ack_to_device(
+    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_vpn_write: Arc<Mutex<dyn Write + Send + 'static>>,
 ) -> Result<()> {
     let rst_ack_tcp_packet = PacketBuilder::ipv4(key.destination_address.octets(), key.source_address.octets(), IP_PACKET_TTL)
         .tcp(
@@ -544,21 +542,21 @@ async fn send_fin_ack_to_device<T: AsyncWrite + Unpin + Send>(
         return Err(anyhow!("Fail to generate rst ack packet because of error"));
     };
 
-    let mut device_output_stream = device_output_stream.lock().await;
-    if let Err(e) = device_output_stream.write(rst_ack_packet_bytes.as_ref()).await {
+    let mut device_vpn_write = device_vpn_write.lock().await;
+    if let Err(e) = device_vpn_write.write(&rst_ack_packet_bytes) {
         debug!("<<<< Fail to write fin ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write rst ack packet to device because of error"));
     };
-    if let Err(e) = device_output_stream.flush().await {
-        debug!("<<<< Fail to flush fin ack packet to device because of error: {e:?}");
-        return Err(anyhow!("Fail to write rst ack packet to device because of error"));
-    };
+    // if let Err(e) = device_output_stream.flush().await {
+    //     debug!("<<<< Fail to flush fin ack packet to device because of error: {e:?}");
+    //     return Err(anyhow!("Fail to write rst ack packet to device because of error"));
+    // };
     debug!("<<<< Tcp connection [{}] write fin to device, current data_model:\n{:#?}\n\n", key, &data_model);
     Ok(())
 }
 
-async fn send_rst_to_device<T: AsyncWrite + Unpin + Send>(
-    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_output_stream: Arc<Mutex<T>>,
+async fn send_rst_to_device(
+    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_output_stream: Arc<Mutex<dyn Write + Send + 'static>>,
 ) -> Result<()> {
     let rst_ack_tcp_packet = PacketBuilder::ipv4(key.destination_address.octets(), key.source_address.octets(), IP_PACKET_TTL)
         .tcp(
@@ -576,20 +574,20 @@ async fn send_rst_to_device<T: AsyncWrite + Unpin + Send>(
     };
 
     let mut device_output_stream = device_output_stream.lock().await;
-    if let Err(e) = device_output_stream.write(rst_ack_packet_bytes.as_ref()).await {
+    if let Err(e) = device_output_stream.write(&rst_ack_packet_bytes) {
         debug!("<<<< Fail to write rst ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write rst ack packet to device because of error"));
     };
-    if let Err(e) = device_output_stream.flush().await {
-        debug!("<<<< Fail to flush rst ack packet to device because of error: {e:?}");
-        return Err(anyhow!("Fail to write rst ack packet to device because of error"));
-    };
+    // if let Err(e) = device_output_stream.flush().await {
+    //     debug!("<<<< Fail to flush rst ack packet to device because of error: {e:?}");
+    //     return Err(anyhow!("Fail to write rst ack packet to device because of error"));
+    // };
     debug!("<<<< Tcp connection [{}] write rst to device, current data_model:\n{:#?}\n\n", key, &data_model);
     Ok(())
 }
 
-async fn send_ack_to_device<T: AsyncWrite + Unpin + Send>(
-    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_output_stream: Arc<Mutex<T>>, payload: Option<&[u8]>,
+async fn send_ack_to_device(
+    key: TcpConnectionKey, data_model: &TcpConnectionDataModel, device_vpn_write: Arc<Mutex<dyn Write + Send + 'static>>, payload: Option<&[u8]>,
 ) -> Result<()> {
     let ack_tcp_packet = PacketBuilder::ipv4(key.destination_address.octets(), key.source_address.octets(), IP_PACKET_TTL)
         .tcp(
@@ -615,15 +613,15 @@ async fn send_ack_to_device<T: AsyncWrite + Unpin + Send>(
         return Err(anyhow!("Fail to generate sync ack packet because of error"));
     };
 
-    let mut device_output_stream = device_output_stream.lock().await;
-    if let Err(e) = device_output_stream.write(ack_packet_bytes.as_ref()).await {
+    let mut device_vpn_write = device_vpn_write.lock().await;
+    if let Err(e) = device_vpn_write.write(&ack_packet_bytes) {
         debug!("<<<< Fail to write sync ack packet to device because of error: {e:?}");
         return Err(anyhow!("Fail to write sync ack packet to device because of error"));
     };
-    if let Err(e) = device_output_stream.flush().await {
-        debug!("<<<< Fail to flush sync ack packet to device because of error: {e:#?}");
-        return Err(anyhow!("Fail to write sync ack packet to device because of error"));
-    };
+    // if let Err(e) = device_output_stream.flush().await {
+    //     debug!("<<<< Fail to flush sync ack packet to device because of error: {e:#?}");
+    //     return Err(anyhow!("Fail to write sync ack packet to device because of error"));
+    // };
 
     debug!(
         "<<<< Tcp connection [{}] ack to device, current data_model:\n{:#?}\n\ndestination payload:\n\n{}\n\n",
@@ -635,8 +633,9 @@ async fn send_ack_to_device<T: AsyncWrite + Unpin + Send>(
 }
 
 /// Start a async task to read data from destination
-async fn start_read_destination<T: AsyncWrite + Unpin + Send>(
-    data_model: Arc<RwLock<TcpConnectionDataModel>>, key: TcpConnectionKey, device_output_stream: Arc<Mutex<T>>, mut destination_read: OwnedReadHalf,
+async fn start_read_destination(
+    data_model: Arc<RwLock<TcpConnectionDataModel>>, key: TcpConnectionKey, device_vpn_write: Arc<Mutex<dyn Write + Send + 'static>>,
+    mut destination_read: OwnedReadHalf,
 ) -> Result<(), anyhow::Error> {
     loop {
         let mut destination_tcp_buf = Vec::with_capacity(1024 * 64);
@@ -648,7 +647,7 @@ async fn start_read_destination<T: AsyncWrite + Unpin + Send>(
 
                 // Close the connection activally when read destination complete
 
-                if let Err(e) = send_fin_ack_to_device(key, &data_model, device_output_stream).await {
+                if let Err(e) = send_fin_ack_to_device(key, &data_model, device_vpn_write).await {
                     debug!("<<<< Tcp connection [{key}] fail to send fin ack packet to device because of error: {e:?}");
                     return Err(anyhow!("Tcp connection [{key}] fail to send fin ack packet to device because of error"));
                 };
@@ -670,7 +669,7 @@ async fn start_read_destination<T: AsyncWrite + Unpin + Send>(
         if let Err(e) = send_ack_to_device(
             key,
             &data_model,
-            device_output_stream.clone(),
+            device_vpn_write.clone(),
             Some(&destination_tcp_buf[..destination_read_data_size]),
         )
         .await

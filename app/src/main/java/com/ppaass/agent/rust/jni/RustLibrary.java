@@ -6,15 +6,8 @@ public class RustLibrary {
     static {
         System.loadLibrary("rust");
     }
-
-//    public static native String handleInputString(String inputMessage);
-//
-//
-//    public static native ExampleNativeObject handleInputObject(ExampleNativeObject input);
-
     public static native void startVpn(int vpnFd, VpnService vpnService);
 
     public static native void stopVpn();
 
-    public static native void initLog();
 }
