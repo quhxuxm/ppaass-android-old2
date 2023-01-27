@@ -32,17 +32,17 @@ pub(crate) struct UdpPacketInfo {
     pub destination_address: Ipv4Addr,
     pub destination_port: u16,
     pub payload: Vec<u8>,
-    pub device_vpn_write: Arc<Mutex<dyn Write + Send + 'static>>,
+    pub device_write: Arc<Mutex<dyn Write + Send + 'static>>,
 }
 
-pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, jni_env: JNIEnv<'a>, vpn_service_java_obj: GlobalRef) -> Result<()> {
+pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, jni_env: JNIEnv<'a>, vpn_service: JObject<'a>) -> Result<()> {
     let UdpPacketInfo {
         source_address,
         source_port,
         destination_address,
         destination_port,
         payload,
-        device_vpn_write,
+        device_write,
     } = udp_packet_info;
     let udp_packet_key = generate_udp_packet_key(source_address, source_port, destination_address, destination_port);
     let local_socket_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
@@ -54,7 +54,7 @@ pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, jni_en
         },
     };
     let udp_socket_raw_fd = local_udp_socket.as_raw_fd();
-    if let Err(e) = protect_socket(&udp_packet_key, jni_env, vpn_service_java_obj, udp_socket_raw_fd) {
+    if let Err(e) = protect_socket(&udp_packet_key, jni_env, vpn_service, udp_socket_raw_fd) {
         debug!(">>>> Udp socket [{udp_packet_key}] fail to protect udp socket because of error: {e:?}");
         return Err(anyhow!(e));
     };
@@ -125,13 +125,13 @@ pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, jni_en
             debug!(">>>> Udp socket [{udp_packet_key}] fail to prepare destination data udp packet write to device because of error: {e:?}");
             return Err::<(), anyhow::Error>(anyhow!(e));
         };
-        let mut device_vpn_write = device_vpn_write.lock().await;
+        let mut device_write = device_write.lock().await;
 
         debug!(
             "Udp socket [{udp_packet_key}], begin to write destination udp packet bytes to device, length= {}",
             received_destination_udp_packet_bytes.len()
         );
-        if let Err(e) = device_vpn_write.write(&received_destination_udp_packet_bytes) {
+        if let Err(e) = device_write.write(&received_destination_udp_packet_bytes) {
             debug!(">>>> Udp socket [{udp_packet_key}] fail to write to device because of error: {e:?}");
             return Err::<(), anyhow::Error>(anyhow!(e));
         };

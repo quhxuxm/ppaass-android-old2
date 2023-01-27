@@ -71,7 +71,7 @@ impl TcpConnection {
     }
 
     pub async fn process<'a, 'j>(
-        &mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8], jni_env: JNIEnv<'j>, vpn_service_java_obj: GlobalRef,
+        &mut self, _ipv4_header: Ipv4HeaderSlice<'a>, tcp_header: TcpHeaderSlice<'a>, payload: &'a [u8], jni_env: JNIEnv<'j>, vpn_service: JObject<'j>,
     ) -> Result<()> {
         let mut data_model = self.data_model.write().await;
 
@@ -175,7 +175,7 @@ impl TcpConnection {
                 let destination_tcp_socket = match TcpSocket::new_v4() {
                     Ok(destination_tcp_socket) => {
                         let destination_tcp_socket_raw_fd = destination_tcp_socket.as_raw_fd();
-                        if let Err(e) = protect_socket(format!("{}", self.key), jni_env, vpn_service_java_obj, destination_tcp_socket_raw_fd) {
+                        if let Err(e) = protect_socket(format!("{}", self.key), jni_env, vpn_service, destination_tcp_socket_raw_fd) {
                             debug!(">>>> Tcp connection [{}] fail to protect destination socket because of error: {e:?}", self.key);
                             self.close_connection(&data_model, true).await;
                             return Err(anyhow!("Tcp connection [{}] fail to protect destination socket because of error", self.key));
