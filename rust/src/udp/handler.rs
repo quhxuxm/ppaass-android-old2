@@ -137,14 +137,22 @@ where
             ));
         };
 
+        let mut device_write = device_write.lock().await;
         debug!(
             "Udp socket [{udp_packet_key}], begin to write destination udp packet bytes to device, length= {}",
             received_destination_udp_packet_bytes.len()
         );
-        let mut device_write = device_write.lock().await;
         if let Err(e) = device_write.write(&received_destination_udp_packet_bytes).await {
             error!(">>>> Udp socket [{udp_packet_key}] fail to write to device because of error: {e:?}");
             return Err::<(), anyhow::Error>(anyhow!("Udp socket [{udp_packet_key}] fail to write to device because of error: {e:?}"));
+        };
+        debug!(
+            "Udp socket [{udp_packet_key}], begin to flush destination udp packet bytes to device, length= {}",
+            received_destination_udp_packet_bytes.len()
+        );
+        if let Err(e) = device_write.flush().await {
+            error!(">>>> Udp socket [{udp_packet_key}] fail to write to device because of error(flush): {e:?}");
+            return Err::<(), anyhow::Error>(anyhow!("Udp socket [{udp_packet_key}] fail to write to device because of error(flush): {e:?}"));
         };
         Ok(())
     });

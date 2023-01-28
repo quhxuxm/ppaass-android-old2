@@ -4,6 +4,7 @@ use std::{
         hash_map::Entry::{Occupied, Vacant},
         HashMap,
     },
+    fs::Permissions,
     io::ErrorKind,
     os::fd::FromRawFd,
     sync::Arc,
@@ -130,6 +131,12 @@ async fn concrete_start_vpn(_class: JClass<'static>, device_fd: jint, vpn_servic
     let tcp_connection_repository = Arc::new(RwLock::new(HashMap::<TcpConnectionKey, TcpConnection<_>>::new()));
 
     let device_file = unsafe { File::from_raw_fd(device_fd) };
+    // let mut device_file_permissions = device_file.metadata().await.expect("Fail to get vpn file permissions").permissions();
+    // device_file_permissions.set_readonly(false);
+    // device_file
+    //     .set_permissions(device_file_permissions)
+    //     .await
+    //     .expect("Fail to set vpn file to writable.");
     let (mut device_read, device_write) = tokio::io::split(device_file);
 
     let device_write = Arc::new(Mutex::new(device_write));
@@ -157,6 +164,7 @@ async fn concrete_start_vpn(_class: JClass<'static>, device_fd: jint, vpn_servic
                 continue;
             },
         };
+
         trace!(">>>> Read vpn packet: {ip_packet:?}");
         let ip_header = match ip_packet.ip {
             Some(ip_header) => {
@@ -226,20 +234,20 @@ async fn concrete_start_vpn(_class: JClass<'static>, device_fd: jint, vpn_servic
                         let tcp_connection = entry.get_mut();
 
                         if let Err(e) = tcp_connection.process(ipv4_header, tcp_header, ip_packet.payload).await {
-                            
                             error!(">>>> Fail to process tcp connection [{key}] because of error(existing): {e:?}");
+                            entry.remove();
                             continue;
                         };
                     },
                     Vacant(entry) => {
                         debug!(">>>> Create new tcp connection [{key}]");
-                        let tcp_connection = TcpConnection::new(key, device_write.clone(), tcp_connection_repository.clone());
-                        let tcp_connection = entry.insert(tcp_connection);
+                        let mut tcp_connection = TcpConnection::new(key, device_write.clone(), tcp_connection_repository.clone());
 
                         if let Err(e) = tcp_connection.process(ipv4_header, tcp_header, ip_packet.payload).await {
                             error!(">>>> Fail to process tcp connection [{key}] because of error(new): {e:?}");
                             continue;
                         };
+                        entry.insert(tcp_connection);
                     },
                 };
             },
