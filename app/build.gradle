@@ -47,7 +47,11 @@ cargo {
     module = "../rust"       // Or whatever directory contains your Cargo.toml
     libname = "rust"          // Or whatever matches Cargo.toml's [package] name.
     targets = ['arm64', 'x86_64']      // See bellow for a longer list of options
-//    targetIncludes=["rust_lib"]
+    verbose = true
+    profile = 'debug'
+    features {
+        all()
+    }
 }
 
 tasks.configureEach { task ->
