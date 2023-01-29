@@ -131,12 +131,6 @@ async fn concrete_start_vpn(_class: JClass<'static>, device_fd: jint, vpn_servic
     let tcp_connection_repository = Arc::new(RwLock::new(HashMap::<TcpConnectionKey, TcpConnection<_>>::new()));
 
     let device_file = unsafe { File::from_raw_fd(device_fd) };
-    // let mut device_file_permissions = device_file.metadata().await.expect("Fail to get vpn file permissions").permissions();
-    // device_file_permissions.set_readonly(false);
-    // device_file
-    //     .set_permissions(device_file_permissions)
-    //     .await
-    //     .expect("Fail to set vpn file to writable.");
     let (mut device_read, device_write) = tokio::io::split(device_file);
 
     let device_write = Arc::new(Mutex::new(device_write));

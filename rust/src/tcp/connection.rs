@@ -75,9 +75,18 @@ where
             return Err(anyhow!("Fail to generate sync ack packet because of error"));
         };
 
-        if let Err(e) = device_write.write(&sync_ack_packet_bytes).await {
-            error!("<<<< Tcp connection [{key}] fail to write sync ack packet to device because of error: {e:?}");
-            return Err(anyhow!("Fail to write sync ack packet to device because of error"));
+        match device_write.write(&sync_ack_packet_bytes).await {
+            Ok(0) => {
+                error!("<<<< Tcp connection [{key}] fail to write sync ack packet to device 0 bytes wrrite");
+                return Err(anyhow!("Tcp connection [{key}] fail to write sync ack packet to device 0 bytes wrrite"));
+            },
+            Ok(size) => {
+                debug!("<<<< Tcp connection [{key}] success write {size} bytes to device");
+            },
+            Err(e) => {
+                error!("<<<< Tcp connection [{key}] fail to write sync ack packet to device because of error: {e:?}");
+                return Err(anyhow!("Fail to write sync ack packet to device because of error"));
+            },
         };
         if let Err(e) = device_write.flush().await {
             debug!("<<<< Tcp connection [{key}] fail to flush sync ack packet to device because of error: {e:?}");
