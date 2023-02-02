@@ -32,7 +32,6 @@ const CONNECT_TO_DST_TIMEOUT: u64 = 20;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TcpConnectionTunHandle {
-    connection_key: TcpConnectionKey,
     tun_input_sender: Sender<(TcpHeader, Vec<u8>)>,
 }
 
@@ -54,6 +53,15 @@ pub(crate) struct TcpConnection {
     connection_repository: Arc<Mutex<HashMap<TcpConnectionKey, TcpConnectionTunHandle>>>,
 }
 
+impl Drop for TcpConnection {
+    fn drop(&mut self) {
+        if let Some(ref dst_relay_guard) = self.dst_relay_guard {
+            dst_relay_guard.abort();
+        }
+        let _ = self.dst_write.take();
+    }
+}
+
 impl Debug for TcpConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TcpConnection")
@@ -71,10 +79,7 @@ impl TcpConnection {
         debug!(">>>> Create new tcp connection [{connection_key}]");
         let (tun_input_sender, tun_input_receiver) = channel(1024);
 
-        let tun_handle = TcpConnectionTunHandle {
-            tun_input_sender,
-            connection_key,
-        };
+        let tun_handle = TcpConnectionTunHandle { tun_input_sender };
         Self {
             connection_key,
             dst_relay_guard: None,

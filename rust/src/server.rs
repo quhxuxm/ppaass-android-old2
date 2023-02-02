@@ -77,7 +77,7 @@ impl PpaassVpnServer {
             return Err(anyhow!("Fail to start ppaass vpn server [{}] becuase of no runtime.", self.id));
         };
 
-        let tcp_connection_tun_handle_repository = self.tcp_connection_tun_handle_repository.clone();
+        let tcp_connection_handle_repository = self.tcp_connection_tun_handle_repository.clone();
 
         let (tun_write_sender, mut tun_write_receiver) = channel::<Vec<u8>>(1024);
         let tun_fd = self.tun_fd;
@@ -181,8 +181,8 @@ impl PpaassVpnServer {
                                 tcp_header.destination_port(),
                             );
 
-                            let mut tcp_connection_tun_handle_repository_lock = tcp_connection_tun_handle_repository.lock().await;
-                            let tcp_connection_tun_handle = match tcp_connection_tun_handle_repository_lock.entry(tcp_connection_key) {
+                            let mut tcp_connection_handle_repository_lock = tcp_connection_handle_repository.lock().await;
+                            let tcp_connection_handle = match tcp_connection_handle_repository_lock.entry(tcp_connection_key) {
                                 Occupied(entry) => {
                                     debug!(">>>> Get existing tcp connection [{tcp_connection_key}]");
                                     entry.into_mut()
@@ -190,22 +190,22 @@ impl PpaassVpnServer {
                                 Vacant(entry) => {
                                     debug!(">>>> Create new tcp connection [{tcp_connection_key}]");
                                     let mut tcp_connection =
-                                        TcpConnection::new(tcp_connection_key, tun_write_sender.clone(), tcp_connection_tun_handle_repository.clone());
+                                        TcpConnection::new(tcp_connection_key, tun_write_sender.clone(), tcp_connection_handle_repository.clone());
                                     let handle = entry.insert(tcp_connection.clone_tun_handle());
-                                    let tcp_connection_tun_handle_repository = tcp_connection_tun_handle_repository.clone();
+                                    let tcp_connection_handle_repository = tcp_connection_handle_repository.clone();
                                     tokio::spawn(async move {
                                         if let Err(e) = tcp_connection.process().await {
                                             error!(">>>> Fail to process tcp connection [{tcp_connection_key}] because of error: {e:?}");
-                                            let mut tcp_connection_tun_handle_repository_lock = tcp_connection_tun_handle_repository.lock().await;
-                                            tcp_connection_tun_handle_repository_lock.remove(&tcp_connection_key);
+                                            let mut tcp_connection_handle_repository_lock = tcp_connection_handle_repository.lock().await;
+                                            tcp_connection_handle_repository_lock.remove(&tcp_connection_key);
                                         }
                                     });
                                     handle
                                 },
                             };
-                            if let Err(e) = tcp_connection_tun_handle.handle_tun_input(tcp_header.to_header(), ip_packet.payload).await {
+                            if let Err(e) = tcp_connection_handle.handle_tun_input(tcp_header.to_header(), ip_packet.payload).await {
                                 error!(">>>> Tcp connection [{tcp_connection_key}] fail to handle tun input because of error: {e:?}");
-                                tcp_connection_tun_handle_repository_lock.remove(&tcp_connection_key);
+                                tcp_connection_handle_repository_lock.remove(&tcp_connection_key);
                             };
                         },
                         Unknown(unknown_protocol) => {
