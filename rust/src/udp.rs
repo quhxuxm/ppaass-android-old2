@@ -1,9 +1,7 @@
 use std::{
     fmt::{Debug, Display},
-    io::Write,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     os::fd::AsRawFd,
-    sync::Arc,
     time::Duration,
 };
 
@@ -12,11 +10,7 @@ use anyhow::{anyhow, Result};
 use etherparse::PacketBuilder;
 
 use log::debug;
-use tokio::{
-    net::UdpSocket,
-    sync::{mpsc::Sender, Mutex},
-    time::timeout,
-};
+use tokio::{net::UdpSocket, sync::mpsc::Sender, time::timeout};
 
 use crate::protect_socket;
 use dns_parser::Packet as DnsPacket;
