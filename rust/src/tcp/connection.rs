@@ -59,6 +59,7 @@ impl Drop for TcpConnection {
             dst_relay_guard.abort();
         }
         let _ = self.dst_write.take();
+        debug!("#### Tcp connection [{}] dropped.", self.connection_key)
     }
 }
 

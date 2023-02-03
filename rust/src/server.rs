@@ -8,6 +8,7 @@ use std::{
     io::{ErrorKind, Read, Write},
     os::fd::FromRawFd,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -118,10 +119,14 @@ impl PpaassVpnServer {
                     let mut tun_read = tun_read.lock().await;
 
                     let tun_read_buf = match tun_read.read(&mut tun_read_buf) {
-                        Ok(0) => continue,
+                        Ok(0) => {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        },
                         Ok(size) => &tun_read_buf[..size],
                         Err(e) => {
                             if e.kind() == ErrorKind::WouldBlock {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
                                 continue;
                             }
                             error!(">>>> Fail to read data from tun because of error: {e:?}");
