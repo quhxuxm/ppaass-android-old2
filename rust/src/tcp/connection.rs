@@ -9,7 +9,7 @@ use std::{
 
 use crate::protect_socket;
 
-use super::{TcpConnectionControlBlock, TcpConnectionKey, TcpConnectionStatus};
+use super::{TcpConnectionKey, TcpConnectionStatus, TransmissionControlBlock};
 use anyhow::{anyhow, Result};
 use etherparse::{PacketBuilder, TcpHeader};
 use log::{debug, error};
@@ -49,8 +49,9 @@ pub(crate) struct TcpConnection {
     tun_input_receiver: Receiver<(TcpHeader, Vec<u8>)>,
     tun_output_sender: Sender<Vec<u8>>,
     tun_handle: TcpConnectionTunHandle,
-    tcb: Arc<RwLock<TcpConnectionControlBlock>>,
+    tcb: Arc<RwLock<TransmissionControlBlock>>,
     connection_repository: Arc<Mutex<HashMap<TcpConnectionKey, TcpConnectionTunHandle>>>,
+    tun_input_buffer: Vec<u8>,
 }
 
 impl Drop for TcpConnection {
@@ -90,6 +91,7 @@ impl TcpConnection {
             tcb: Default::default(),
             dst_write: None,
             connection_repository,
+            tun_input_buffer: Vec::new(),
         }
     }
 
@@ -192,7 +194,7 @@ impl TcpConnection {
     }
 
     async fn on_listen(
-        connection_key: TcpConnectionKey, tcb: &mut TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
+        connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
     ) -> Result<()> {
         if !tcp_header.syn {
             error!(
@@ -205,19 +207,19 @@ impl TcpConnection {
             ));
         }
 
-        let initial_send_sequence_number = random::<u32>();
+        let iss = random::<u32>();
 
         tcb.status = TcpConnectionStatus::SynReceived;
 
-        tcb.current_segment_space.seg_seq = initial_send_sequence_number;
+        tcb.current_segment_space.seg_seq = iss;
         // Expect next device tcp packet should increase the sequence by 1
         tcb.current_segment_space.seg_ack = tcp_header.sequence_number + 1;
         tcb.current_segment_space.seg_wnd = WINDOW_SIZE;
         // Syn will also count into segment length, but the ack will not count in
         tcb.current_segment_space.seq_len = 1;
 
-        tcb.send_sequence_space.iss = initial_send_sequence_number;
-        tcb.send_sequence_space.snd_nxt = tcb.current_segment_space.seg_seq + 1;
+        tcb.send_sequence_space.iss = iss;
+        tcb.send_sequence_space.snd_nxt = tcb.current_segment_space.seg_seq + tcb.current_segment_space.seq_len;
         tcb.send_sequence_space.snd_una = tcb.current_segment_space.seg_seq;
         tcb.send_sequence_space.snd_wnd = WINDOW_SIZE;
 
@@ -231,7 +233,7 @@ impl TcpConnection {
     }
 
     async fn on_syn_received(
-        connection_key: TcpConnectionKey, tcb: &mut TcpConnectionControlBlock, owned_tbc: Arc<RwLock<TcpConnectionControlBlock>>,
+        connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, owned_tbc: Arc<RwLock<TransmissionControlBlock>>,
         tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
     ) -> Result<(OwnedWriteHalf, JoinHandle<()>)> {
         if tcp_header.syn {
@@ -293,7 +295,7 @@ impl TcpConnection {
     }
 
     async fn on_established(
-        connection_key: TcpConnectionKey, tcb: &mut TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>, dst_write: &mut OwnedWriteHalf,
+        connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>, dst_write: &mut OwnedWriteHalf,
         tcp_header: TcpHeader, payload: Vec<u8>,
     ) -> Result<()> {
         // Process the connection when the connection in Established status
@@ -368,7 +370,7 @@ impl TcpConnection {
     }
 
     async fn on_fin_wait1(
-        connection_key: TcpConnectionKey, tcb: &mut TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
+        connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
     ) -> Result<()> {
         if !tcp_header.ack {
             error!(">>>> Tcp connection [{connection_key}] fail to process [FinWait1], expect ack=true, but get: {tcp_header:?}",);
@@ -396,7 +398,7 @@ impl TcpConnection {
     }
 
     async fn on_fin_wait2(
-        connection_key: TcpConnectionKey, tcb: &mut TcpConnectionControlBlock, owned_tcb: Arc<RwLock<TcpConnectionControlBlock>>,
+        connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, owned_tcb: Arc<RwLock<TransmissionControlBlock>>,
         connection_repository: Arc<Mutex<HashMap<TcpConnectionKey, TcpConnectionTunHandle>>>, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
     ) -> Result<()> {
         if !tcp_header.fin {
@@ -444,7 +446,7 @@ impl TcpConnection {
     }
 
     async fn on_last_ack(
-        connection_key: TcpConnectionKey, tcb: &mut TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>,
+        connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>,
         connection_repository: &Arc<Mutex<HashMap<TcpConnectionKey, TcpConnectionTunHandle>>>, tcp_header: TcpHeader,
     ) -> Result<()> {
         if !tcp_header.ack && tcb.current_segment_space.seg_ack != tcp_header.sequence_number {
@@ -465,7 +467,7 @@ impl TcpConnection {
     }
 
     async fn on_time_wait(
-        connection_key: TcpConnectionKey, tcb: &mut TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
+        connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
     ) -> Result<()> {
         Self::send_ack_to_tun(connection_key, tcb, tun_output_sender, None).await?;
         debug!(">>>> Tcp connection [{connection_key}] keep in [TimeWait], current tcb: {tcb:?}");
@@ -473,7 +475,7 @@ impl TcpConnection {
     }
 
     async fn on_close_wait(
-        connection_key: TcpConnectionKey, tcb: &mut TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
+        connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
     ) -> Result<()> {
         Self::send_ack_to_tun(connection_key, tcb, tun_output_sender, None).await?;
         tcb.status = TcpConnectionStatus::LastAck;
@@ -482,7 +484,7 @@ impl TcpConnection {
     }
 
     async fn start_dst_relay(
-        connection_key: TcpConnectionKey, tun_output_sender: Sender<Vec<u8>>, mut dst_read: OwnedReadHalf, owned_tcb: Arc<RwLock<TcpConnectionControlBlock>>,
+        connection_key: TcpConnectionKey, tun_output_sender: Sender<Vec<u8>>, mut dst_read: OwnedReadHalf, owned_tcb: Arc<RwLock<TransmissionControlBlock>>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
@@ -542,7 +544,7 @@ impl TcpConnection {
     }
 
     async fn send_ack_to_tun(
-        connection_key: TcpConnectionKey, tcb: &TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>, payload: Option<&[u8]>,
+        connection_key: TcpConnectionKey, tcb: &TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>, payload: Option<&[u8]>,
     ) -> Result<()> {
         let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
             .tcp(
@@ -569,7 +571,7 @@ impl TcpConnection {
         Ok(())
     }
 
-    async fn send_fin_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
+    async fn send_fin_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
         let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
             .tcp(
                 connection_key.dst_port,
@@ -586,7 +588,7 @@ impl TcpConnection {
         Ok(())
     }
 
-    async fn send_syn_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
+    async fn send_syn_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
         let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
             .tcp(
                 connection_key.dst_port,
@@ -604,7 +606,7 @@ impl TcpConnection {
         Ok(())
     }
 
-    async fn send_rst_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TcpConnectionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
+    async fn send_rst_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
         let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
             .tcp(
                 connection_key.dst_port,

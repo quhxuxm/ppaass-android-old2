@@ -60,13 +60,11 @@ impl Display for TcpConnectionStatus {
         match *self {
             TcpConnectionStatus::Closed => write!(f, "CLOSED"),
             TcpConnectionStatus::Listen => write!(f, "LISTEN"),
-
             TcpConnectionStatus::SynReceived => write!(f, "SYN-RECEIVED"),
             TcpConnectionStatus::Established => write!(f, "ESTABLISHED"),
             TcpConnectionStatus::FinWait1 => write!(f, "FIN-WAIT-1"),
             TcpConnectionStatus::FinWait2 => write!(f, "FIN-WAIT-2"),
             TcpConnectionStatus::CloseWait => write!(f, "CLOSE-WAIT"),
-
             TcpConnectionStatus::LastAck => write!(f, "LAST-ACK"),
             TcpConnectionStatus::TimeWait => write!(f, "TIME-WAIT"),
         }
@@ -99,6 +97,8 @@ impl Display for TcpConnectionStatus {
 ///
 #[derive(Debug, Default)]
 struct SendSequenceSpace {
+    /// Equals to the oldest unacknowledged sequence number
+    ///
     /// The sender of data keeps track of the oldest
     /// unacknowledged sequence number in the
     /// variable SND.UNA
@@ -109,6 +109,8 @@ struct SendSequenceSpace {
     /// The amount by which the variables are advanced is the
     /// length of the data in the segment
     pub snd_una: u32,
+    /// Equals to next sequence number to be sent
+    ///
     /// The sender of data keeps track of the next
     /// sequence number to use in the variable SND.NXT.
     ///
@@ -187,7 +189,7 @@ struct CurrentSegmentSpace {
 }
 
 #[derive(Debug, Default)]
-struct TcpConnectionControlBlock {
+struct TransmissionControlBlock {
     pub send_sequence_space: SendSequenceSpace,
     pub receive_sequence_space: ReceiveSequenceSpace,
     pub current_segment_space: CurrentSegmentSpace,
