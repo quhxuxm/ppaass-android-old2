@@ -20,6 +20,7 @@ use server::PpaassVpnServer;
 
 mod server;
 mod tcp;
+mod udp;
 
 pub(crate) static mut PPAASS_VPN_SERVER: OnceCell<PpaassVpnServer> = OnceCell::new();
 pub(crate) static mut JAVA_VPN_SERVICE_OBJ: OnceCell<GlobalRef> = OnceCell::new();

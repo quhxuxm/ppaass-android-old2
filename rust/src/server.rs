@@ -24,7 +24,10 @@ use tokio::{runtime::Runtime as TokioRuntime, sync::Mutex};
 
 use uuid::Uuid;
 
-use crate::tcp::{TcpConnection, TcpConnectionKey, TcpConnectionTunHandle};
+use crate::{
+    tcp::{TcpConnection, TcpConnectionKey, TcpConnectionTunHandle},
+    udp::{handle_udp_packet, UdpPacketInfo},
+};
 
 pub(crate) struct PpaassVpnServer {
     id: String,
@@ -171,6 +174,18 @@ impl PpaassVpnServer {
                         },
                         Udp(udp_header) => {
                             trace!(">>>> Receive udp packet: {udp_header:?}");
+
+                            let udp_packet_info = UdpPacketInfo {
+                                src_addr: ipv4_header.source_addr(),
+                                src_port: udp_header.source_port(),
+                                dst_addr: ipv4_header.destination_addr(),
+                                dst_port: udp_header.destination_port(),
+                                payload: ip_packet.payload.to_vec(),
+                            };
+                            let udp_packet_key = format!("{udp_packet_info}");
+                            if let Err(e) = handle_udp_packet(udp_packet_info, tun_write_sender.clone()).await {
+                                error!(">>>> Udp socket [{udp_packet_key}] fail to handle tun input because of error: {e:?}");
+                            };
                             continue;
                         },
                         Tcp(tcp_header) => {
