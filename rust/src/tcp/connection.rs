@@ -344,7 +344,8 @@ impl TcpConnection {
             };
 
             debug!(
-                ">>>> Tcp connection [{connection_key}] success relay tun data to destination:\n{}\n",
+                ">>>> Tcp connection [{connection_key}] success relay tun data [size={}] to destination:\n{}\n",
+                relay_data_length,
                 pretty_hex::pretty_hex(&payload)
             );
         }
