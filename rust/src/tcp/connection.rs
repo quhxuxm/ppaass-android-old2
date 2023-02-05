@@ -211,21 +211,9 @@ impl TcpConnection {
 
         tcb.status = TcpConnectionStatus::SynReceived;
 
-        tcb.current_segment_space.seg_seq = iss;
-        // Expect next device tcp packet should increase the sequence by 1
-        tcb.current_segment_space.seg_ack = tcp_header.sequence_number + 1;
-        tcb.current_segment_space.seg_wnd = WINDOW_SIZE;
-        // Syn will also count into segment length, but the ack will not count in
-        tcb.current_segment_space.seq_len = 1;
-
-        tcb.send_sequence_space.iss = iss;
-        tcb.send_sequence_space.snd_nxt = tcb.current_segment_space.seg_seq + tcb.current_segment_space.seq_len;
-        tcb.send_sequence_space.snd_una = tcb.current_segment_space.seg_seq;
-        tcb.send_sequence_space.snd_wnd = WINDOW_SIZE;
-
-        tcb.receive_sequence_space.irs = tcp_header.sequence_number;
-        tcb.receive_sequence_space.rcv_nxt = tcp_header.sequence_number + 1;
-        tcb.receive_sequence_space.rcv_wnd = WINDOW_SIZE;
+        tcb.sequence_number = iss;
+        tcb.acknowledgment_number = tcp_header.sequence_number + 1;
+        tcb.window_size = WINDOW_SIZE;
 
         Self::send_syn_ack_to_tun(connection_key, tcb, tun_output_sender).await?;
         debug!(">>>> Tcp connection [{connection_key}] switch to [SynReceived], current tcb: {tcb:?}",);
@@ -250,25 +238,25 @@ impl TcpConnection {
             ));
         }
         // Process the connection when the connection in SynReceived status
-        if tcp_header.sequence_number != tcb.receive_sequence_space.rcv_nxt {
+        if tcp_header.sequence_number != tcb.acknowledgment_number {
             error!(
                 ">>>> Tcp connection [{connection_key}] fail to process [SynReceived], expect sequence number={}, but get: {tcp_header:?}",
-                tcb.receive_sequence_space.rcv_nxt
+                tcb.acknowledgment_number
             );
             return Err(anyhow!(
                 "Tcp connection [{connection_key}] fail to process [SynReceived], expect sequence number={}, but get: {tcp_header:?}",
-                tcb.receive_sequence_space.rcv_nxt
+                tcb.acknowledgment_number
             ));
         }
 
-        if tcp_header.acknowledgment_number != tcb.send_sequence_space.snd_una + 1 {
+        if tcp_header.acknowledgment_number != tcb.sequence_number + 1 {
             error!(
                 ">>>> Tcp connection [{connection_key}] fail to process [SynReceived], expect sequence number={}, but get: {tcp_header:?}",
-                tcb.send_sequence_space.snd_una + 1
+                tcb.sequence_number + 1
             );
             return Err(anyhow!(
                 "Tcp connection [{connection_key}] fail to process [SynReceived], expect sequence number={}, but get: {tcp_header:?}",
-                tcb.send_sequence_space.snd_una + 1,
+                tcb.sequence_number + 1,
             ));
         }
 
@@ -281,14 +269,11 @@ impl TcpConnection {
         debug!(">>>> Tcp connection [{}] connect to destination success.", connection_key);
         let (dst_read, dst_write) = dst_tcp_stream.into_split();
 
-        let dst_relay_task_guard = Self::start_dst_relay(connection_key, tun_output_sender.clone(), dst_read, owned_tbc).await;
+        let dst_relay_task_guard = Self::relay_destination_data(connection_key, tun_output_sender.clone(), dst_read, owned_tbc).await;
 
         tcb.status = TcpConnectionStatus::Established;
 
-        tcb.current_segment_space.seg_seq += 1;
-
-        tcb.send_sequence_space.snd_nxt = tcb.current_segment_space.seg_seq;
-        tcb.send_sequence_space.snd_una = tcb.current_segment_space.seg_seq;
+        tcb.sequence_number += 1;
 
         debug!(">>>> Tcp connection [{connection_key}] switch to [Established], current tcb: {tcb:?}",);
         Ok((dst_write, dst_relay_task_guard))
@@ -299,34 +284,33 @@ impl TcpConnection {
         tcp_header: TcpHeader, payload: Vec<u8>,
     ) -> Result<()> {
         // Process the connection when the connection in Established status
-        if tcb.current_segment_space.seg_seq < tcp_header.acknowledgment_number {
+        if tcb.sequence_number < tcp_header.acknowledgment_number {
             error!(
                 ">>>> Tcp connection [{connection_key}] fail to process [Established], expect sequence number: {}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_seq
+                tcb.sequence_number
             );
 
             return Err(anyhow!(
                 "Tcp connection [{connection_key}] fail to process [Established], expect sequence number: {}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_seq
+                tcb.sequence_number
             ));
         }
 
-        if tcb.current_segment_space.seg_ack < tcp_header.sequence_number {
+        if tcb.acknowledgment_number < tcp_header.sequence_number {
             error!(
                 ">>>> Tcp connection [{connection_key}] fail to process [Established], expect acknowledgment number: {}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_ack
+                tcb.acknowledgment_number
             );
 
             return Err(anyhow!(
                 "Tcp connection [{connection_key}] fail to process [Established], expect acknowledgment number: {}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_ack
+                tcb.acknowledgment_number
             ));
         }
 
         if tcp_header.fin {
             tcb.status = TcpConnectionStatus::CloseWait;
-            tcb.current_segment_space.seg_ack += 1;
-            tcb.receive_sequence_space.rcv_nxt += 1;
+            tcb.acknowledgment_number += 1;
             debug!(">>>> Tcp connection [{connection_key}] switch to [CloseWait], current tcb: {tcb:?}",);
             Self::send_ack_to_tun(connection_key, tcb, tun_output_sender, None).await?;
 
@@ -347,22 +331,27 @@ impl TcpConnection {
                 ));
             },
         };
+        if relay_data_length > 0 {
+            if let Err(e) = dst_write.write(&payload).await {
+                error!(">>>> Tcp connection [{connection_key}] fail to relay tun data to destination because of error(write): {e:?}",);
+                return Err(anyhow!(
+                    "Tcp connection [{connection_key}] fail to relay tun data to destination because of error(write): {e:?}",
+                ));
+            };
+            if let Err(e) = dst_write.flush().await {
+                error!(">>>> Tcp connection [{connection_key}] fail to relay tun data to destination because of error(flush): {e:?}",);
+                return Err(anyhow!(
+                    "Tcp connection [{connection_key}] fail to relay tun data to destination because of error(flush): {e:?}",
+                ));
+            };
 
-        if let Err(e) = dst_write.write(&payload).await {
-            error!(">>>> Tcp connection [{connection_key}] fail to relay tun data to destination because of error(write): {e:?}",);
-            return Err(anyhow!(
-                "Tcp connection [{connection_key}] fail to relay tun data to destination because of error(write): {e:?}",
-            ));
-        };
-        if let Err(e) = dst_write.flush().await {
-            error!(">>>> Tcp connection [{connection_key}] fail to relay tun data to destination because of error(flush): {e:?}",);
-            return Err(anyhow!(
-                "Tcp connection [{connection_key}] fail to relay tun data to destination because of error(flush): {e:?}",
-            ));
-        };
+            debug!(
+                ">>>> Tcp connection [{connection_key}] success relay tun data to destination:\n{}\n",
+                pretty_hex::pretty_hex(&payload)
+            );
+        }
 
-        tcb.current_segment_space.seg_ack += relay_data_length;
-        tcb.receive_sequence_space.rcv_nxt = tcb.current_segment_space.seg_ack;
+        tcb.acknowledgment_number += relay_data_length;
 
         debug!(">>>> Tcp connection [{connection_key}] keep in [Established], current tcb: {tcb:?}",);
         Self::send_ack_to_tun(connection_key, tcb, tun_output_sender, None).await?;
@@ -378,19 +367,28 @@ impl TcpConnection {
                 "Tcp connection [{connection_key}] fail to process [FinWait1], expect ack=true, but get: {tcp_header:?}",
             ));
         }
-        if tcb.current_segment_space.seg_ack != tcp_header.sequence_number {
+        if tcb.sequence_number + 1 != tcp_header.acknowledgment_number {
             error!(
-                ">>>> Tcp connection [{connection_key}] fail to process [FinWait1], expect ack=true, sequence number={}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_ack
+                ">>>> Tcp connection [{connection_key}] fail to process [FinWait1], expect acknowledgment number={}, but get: {tcp_header:?}",
+                tcb.sequence_number + 1
             );
             return Err(anyhow!(
-                "Tcp connection [{connection_key}] fail to process [FinWait1], expect ack=true, sequence number={}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_ack,
+                "Tcp connection [{connection_key}] fail to process [FinWait1], expect acknowledgment number={}, but get: {tcp_header:?}",
+                tcb.sequence_number + 1,
+            ));
+        }
+        if tcb.acknowledgment_number != tcp_header.sequence_number {
+            error!(
+                ">>>> Tcp connection [{connection_key}] fail to process [FinWait1], expect sequence number={}, but get: {tcp_header:?}",
+                tcb.acknowledgment_number
+            );
+            return Err(anyhow!(
+                "Tcp connection [{connection_key}] fail to process [FinWait1], expect sequence number={}, but get: {tcp_header:?}",
+                tcb.acknowledgment_number
             ));
         }
         tcb.status = TcpConnectionStatus::FinWait2;
-        tcb.current_segment_space.seg_seq += 1;
-        tcb.receive_sequence_space.rcv_nxt += 1;
+        tcb.sequence_number += 1;
 
         debug!(">>>> Tcp connection [{connection_key}] switch to [FinWait2], current tcb: {tcb:?}",);
         Self::send_fin_ack_to_tun(connection_key, tcb, tun_output_sender).await?;
@@ -413,14 +411,14 @@ impl TcpConnection {
                 "Tcp connection [{connection_key}] fail to process [FinWait2], expect ack=true, but get: {tcp_header:?}",
             ));
         }
-        if tcb.current_segment_space.seg_ack != tcp_header.sequence_number {
+        if tcb.sequence_number != tcp_header.acknowledgment_number {
             error!(
-                ">>>> Tcp connection [{connection_key}] fail to process [FinWait2], expect ack=true, sequence number={}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_ack
+                ">>>> Tcp connection [{connection_key}] fail to process [FinWait2], expect acknowledgement number={}, but get: {tcp_header:?}",
+                tcb.sequence_number
             );
             return Err(anyhow!(
-                "Tcp connection [{connection_key}] fail to process [FinWait2], expect ack=true, sequence number={}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_ack,
+                "Tcp connection [{connection_key}] fail to process [FinWait2], expect acknowledgement number={}, but get: {tcp_header:?}",
+                tcb.sequence_number
             ));
         }
 
@@ -437,8 +435,8 @@ impl TcpConnection {
             debug!(">>>> Tcp connection [{connection_key}] complete 2ML task switch to [Closed], current tcb: {tcb:?}",);
         });
 
-        tcb.current_segment_space.seg_seq += 1;
-        tcb.current_segment_space.seg_ack += 1;
+        tcb.sequence_number += 1;
+        tcb.acknowledgment_number += 1;
 
         debug!(">>>> Tcp connection [{connection_key}] switch to [TimeWait], current tcb: {tcb:?}",);
         Self::send_ack_to_tun(connection_key, tcb, tun_output_sender, None).await?;
@@ -449,14 +447,14 @@ impl TcpConnection {
         connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>,
         connection_repository: &Arc<Mutex<HashMap<TcpConnectionKey, TcpConnectionTunHandle>>>, tcp_header: TcpHeader,
     ) -> Result<()> {
-        if !tcp_header.ack && tcb.current_segment_space.seg_ack != tcp_header.sequence_number {
+        if !tcp_header.ack && tcb.acknowledgment_number != tcp_header.sequence_number {
             error!(
                 ">>>> Tcp connection [{connection_key}] fail to process [LastAck], expect ack=true, sequence number={}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_ack
+                tcb.sequence_number
             );
             return Err(anyhow!(
                 "Tcp connection [{connection_key}] fail to process [LastAck], expect ack=true, sequence number={}, but get: {tcp_header:?}",
-                tcb.current_segment_space.seg_ack,
+                tcb.acknowledgment_number
             ));
         }
         tcb.status = TcpConnectionStatus::Closed;
@@ -483,7 +481,7 @@ impl TcpConnection {
         Ok(())
     }
 
-    async fn start_dst_relay(
+    async fn relay_destination_data(
         connection_key: TcpConnectionKey, tun_output_sender: Sender<Vec<u8>>, mut dst_read: OwnedReadHalf, owned_tcb: Arc<RwLock<TransmissionControlBlock>>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -491,15 +489,16 @@ impl TcpConnection {
                 let mut dst_read_buf = [0u8; 65535];
                 let dst_read_buf = match dst_read.read(&mut dst_read_buf).await {
                     Ok(0) => {
-                        let mut tcb = owned_tcb.write().await;
-                        debug!("<<<< Tcp connection [{connection_key}] read destination data complete send fin to tun, current connection:{tcb:?}");
                         // Close the connection activally when read destination complete
+                        let mut tcb = owned_tcb.write().await;
+                        // debug!("<<<< Tcp connection [{connection_key}] read destination data complete send fin to tun, current tcb:{tcb:?}");
                         if let Err(e) = Self::send_fin_ack_to_tun(connection_key, &tcb, &tun_output_sender).await {
                             error!("<<<< Tcp connection [{connection_key}] fail to send fin ack packet to tun because of error: {e:?}");
                             break;
                         };
                         tcb.status = TcpConnectionStatus::FinWait1;
-                        debug!("<<<< Tcp connection [{connection_key}] read destination data complete, switch to FinWait1 status.");
+                        tcb.sequence_number += 1;
+                        debug!("<<<< Tcp connection [{connection_key}] read destination data complete, switch to FinWait1 status, current tcb: {tcb:?}");
                         break;
                     },
                     Ok(size) => &dst_read_buf[0..size],
@@ -517,28 +516,16 @@ impl TcpConnection {
                         break;
                     },
                 };
-                tcb.current_segment_space.seg_seq += destination_read_data_size;
-                tcb.send_sequence_space.snd_nxt += destination_read_data_size;
-                tcb.current_segment_space.seq_len = destination_read_data_size;
+                tcb.sequence_number += destination_read_data_size;
 
-                let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
-                    .tcp(
-                        connection_key.dst_port,
-                        connection_key.src_port,
-                        tcb.current_segment_space.seg_seq,
-                        tcb.current_segment_space.seg_wnd,
-                    )
-                    .ack(tcb.current_segment_space.seg_ack);
-                let mut ip_packet_bytes = Vec::with_capacity(ip_packet.size(dst_read_buf.len()));
-                if let Err(e) = ip_packet.write(&mut ip_packet_bytes, dst_read_buf) {
+                if let Err(e) = Self::send_ack_to_tun(connection_key, &tcb, &tun_output_sender, Some(dst_read_buf)).await {
                     error!("<<<< Tcp connection [{connection_key}] fail to generate ip packet write to tun device because of error: {e:?}");
                     continue;
                 };
-                if let Err(e) = tun_output_sender.send(ip_packet_bytes).await {
-                    error!("<<<< Tcp connection [{connection_key}] fail to generate ip packet write to tun device because of error: {e:?}");
-                    continue;
-                };
-                debug!("<<<< Tcp connection [{connection_key}] send ack to device");
+                debug!(
+                    "<<<< Tcp connection [{connection_key}] success relay destination data to tun:\n{}\n",
+                    pretty_hex::pretty_hex(&dst_read_buf)
+                );
             }
         })
     }
@@ -547,13 +534,8 @@ impl TcpConnection {
         connection_key: TcpConnectionKey, tcb: &TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>, payload: Option<&[u8]>,
     ) -> Result<()> {
         let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
-            .tcp(
-                connection_key.dst_port,
-                connection_key.src_port,
-                tcb.current_segment_space.seg_seq,
-                tcb.current_segment_space.seg_wnd,
-            )
-            .ack(tcb.current_segment_space.seg_ack);
+            .tcp(connection_key.dst_port, connection_key.src_port, tcb.sequence_number, tcb.window_size)
+            .ack(tcb.acknowledgment_number);
         let mut ip_packet_bytes = if let Some(payload) = payload {
             Vec::with_capacity(ip_packet.size(payload.len()))
         } else {
@@ -567,60 +549,45 @@ impl TcpConnection {
         };
         ip_packet.write(&mut ip_packet_bytes, payload)?;
         tun_output_sender.send(ip_packet_bytes).await?;
-        debug!("<<<< Tcp connection [{connection_key}] send ack to device, current tcp connection:{tcb:?}",);
+        debug!("<<<< Tcp connection [{connection_key}] send ack to device, current tcb: {tcb:?}",);
         Ok(())
     }
 
     async fn send_fin_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
         let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
-            .tcp(
-                connection_key.dst_port,
-                connection_key.src_port,
-                tcb.current_segment_space.seg_seq,
-                tcb.current_segment_space.seg_wnd,
-            )
+            .tcp(connection_key.dst_port, connection_key.src_port, tcb.sequence_number, tcb.window_size)
             .fin()
-            .ack(tcb.current_segment_space.seg_ack);
+            .ack(tcb.acknowledgment_number);
         let mut ip_packet_bytes = Vec::with_capacity(ip_packet.size(0));
         ip_packet.write(&mut ip_packet_bytes, &[0u8; 0])?;
         tun_output_sender.send(ip_packet_bytes).await?;
-        debug!("<<<< Tcp connection [{connection_key}] send ack to device, current tcp connection:{tcb:?}",);
+        debug!("<<<< Tcp connection [{connection_key}] send ack to device, current tcb: {tcb:?}",);
         Ok(())
     }
 
     async fn send_syn_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
         let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
-            .tcp(
-                connection_key.dst_port,
-                connection_key.src_port,
-                tcb.current_segment_space.seg_seq,
-                tcb.current_segment_space.seg_wnd,
-            )
+            .tcp(connection_key.dst_port, connection_key.src_port, tcb.sequence_number, tcb.window_size)
             .syn()
-            .ack(tcb.current_segment_space.seg_ack);
+            .ack(tcb.acknowledgment_number);
 
         let mut ip_packet_bytes = Vec::with_capacity(ip_packet.size(0));
         ip_packet.write(&mut ip_packet_bytes, &[0u8; 0])?;
         tun_output_sender.send(ip_packet_bytes).await?;
-        debug!("<<<< Tcp connection [{connection_key}] send syn ack to device, current tcp connection:{tcb:?}",);
+        debug!("<<<< Tcp connection [{connection_key}] send syn ack to device, current tcb: {tcb:?}",);
         Ok(())
     }
 
     async fn send_rst_ack_to_tun(connection_key: TcpConnectionKey, tcb: &TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>) -> Result<()> {
         let ip_packet = PacketBuilder::ipv4(connection_key.dst_addr.octets(), connection_key.src_addr.octets(), IP_PACKET_TTL)
-            .tcp(
-                connection_key.dst_port,
-                connection_key.src_port,
-                tcb.current_segment_space.seg_seq,
-                tcb.current_segment_space.seg_wnd,
-            )
+            .tcp(connection_key.dst_port, connection_key.src_port, tcb.sequence_number, tcb.window_size)
             .rst()
-            .ack(tcb.current_segment_space.seg_ack);
+            .ack(tcb.acknowledgment_number);
 
         let mut ip_packet_bytes = Vec::with_capacity(ip_packet.size(0));
         ip_packet.write(&mut ip_packet_bytes, &[0u8; 0])?;
         tun_output_sender.send(ip_packet_bytes).await?;
-        debug!("<<<< Tcp connection [{connection_key}] send rst ack to device, current tcp connection:{tcb:?}",);
+        debug!("<<<< Tcp connection [{connection_key}] send rst ack to device, current tcb: {tcb:?}",);
         Ok(())
     }
 }

@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 
 use etherparse::PacketBuilder;
 
-use log::debug;
+use log::{debug, trace};
 use tokio::{net::UdpSocket, sync::mpsc::Sender, time::timeout};
 
 use crate::protect_socket;
@@ -67,7 +67,7 @@ pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, tun_ou
             return Err(anyhow!(e));
         };
 
-        debug!(
+        trace!(
             ">>>> Udp socket [{udp_packet_key}] forward packet to destination, payload:\n\n{}",
             pretty_hex::pretty_hex(&payload)
         );
@@ -83,7 +83,7 @@ pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, tun_ou
             },
         };
         if let Some(dns_packet) = dns_packet {
-            debug!(">>>> Udp socket [{udp_packet_key}] send dns question packet to destination:\n\n{dns_packet:#?}");
+            trace!(">>>> Udp socket [{udp_packet_key}] send dns question packet to destination:\n\n{dns_packet:#?}");
         }
         debug!(">>>> Udp socket [{udp_packet_key}] success forward packet to destination, udp socket: {local_udp_socket:?}");
         // loop {
@@ -105,8 +105,8 @@ pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, tun_ou
             },
         };
         let receive_data = &receive_data[0..receive_data_size];
-        debug!(
-            ">>>> Udp socket [{udp_packet_key}] success receive destination data:\n\n{}",
+        trace!(
+            "<<<< Udp socket [{udp_packet_key}] success receive destination data:\n\n{}",
             pretty_hex::pretty_hex(&receive_data)
         );
         let dns_packet = match DnsPacket::parse(receive_data) {
@@ -117,7 +117,7 @@ pub(crate) async fn handle_udp_packet<'a>(udp_packet_info: UdpPacketInfo, tun_ou
             },
         };
         if let Some(dns_packet) = dns_packet {
-            debug!(">>>> Udp socket [{udp_packet_key}] receive dns answer packet from destination:\n\n{dns_packet:#?}");
+            trace!("<<<< Udp socket [{udp_packet_key}] receive dns answer packet from destination:\n\n{dns_packet:#?}");
         }
         let received_destination_udp_packet = PacketBuilder::ipv4(dst_addr.octets(), src_addr.octets(), IP_PACKET_TTL).udp(dst_port, src_port);
         let mut received_destination_udp_packet_bytes = Vec::with_capacity(received_destination_udp_packet.size(receive_data_size));
