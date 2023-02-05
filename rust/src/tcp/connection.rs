@@ -51,7 +51,6 @@ pub(crate) struct TcpConnection {
     tun_handle: TcpConnectionTunHandle,
     tcb: Arc<RwLock<TransmissionControlBlock>>,
     connection_repository: Arc<Mutex<HashMap<TcpConnectionKey, TcpConnectionTunHandle>>>,
-    tun_input_buffer: Vec<u8>,
 }
 
 impl Drop for TcpConnection {
@@ -91,7 +90,6 @@ impl TcpConnection {
             tcb: Default::default(),
             dst_write: None,
             connection_repository,
-            tun_input_buffer: Vec::new(),
         }
     }
 
