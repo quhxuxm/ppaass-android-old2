@@ -214,7 +214,7 @@ impl TcpConnection {
         tcb.window_size = WINDOW_SIZE;
 
         Self::send_syn_ack_to_tun(connection_key, tcb, tun_output_sender).await?;
-        debug!(">>>> Tcp connection [{connection_key}] switch to [SynReceived], current tcb: {tcb:?}",);
+        debug!("<<<< Tcp connection [{connection_key}] switch to [SynReceived], current tcb: {tcb:?}",);
         Ok(())
     }
 
@@ -547,7 +547,10 @@ impl TcpConnection {
         };
         ip_packet.write(&mut ip_packet_bytes, payload)?;
         tun_output_sender.send(ip_packet_bytes).await?;
-        debug!("<<<< Tcp connection [{connection_key}] send ack to device, current tcb: {tcb:?}",);
+        debug!(
+            "<<<< Tcp connection [{connection_key}] send ack to device, payload size: {}, current tcb: {tcb:?}",
+            payload.len()
+        );
         Ok(())
     }
 
