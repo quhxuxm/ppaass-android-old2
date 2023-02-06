@@ -14,7 +14,7 @@ public interface IVpnConst {
     AttributeKey<byte[]> TCP_INBOUND_PACKET_TIMESTAMP = AttributeKey.valueOf("TCP_INBOUND_PACKET_TIMESTAMP");
 //    String DNS = "149.28.219.182";
 //    String DNS = "192.168.31.1";
-    String DNS = "8.8.8.8";
+    String DNS = "10.246.128.21";
     String PPAASS_PROXY_IP = "149.28.219.182";
     // String PPAASS_PROXY_IP = "192.168.31.200";
     short PPAASS_PROXY_PORT = 80;
