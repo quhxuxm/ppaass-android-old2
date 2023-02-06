@@ -204,11 +204,11 @@ impl PpaassVpnServer {
                             let mut tcp_connection_handle_repository_lock = tcp_connection_handle_repository.lock().await;
                             let tcp_connection_handle = match tcp_connection_handle_repository_lock.entry(tcp_connection_key) {
                                 Occupied(entry) => {
-                                    debug!(">>>> Get existing tcp connection [{tcp_connection_key}]");
+                                    trace!(">>>> Get existing tcp connection [{tcp_connection_key}]");
                                     entry.into_mut()
                                 },
                                 Vacant(entry) => {
-                                    debug!(">>>> Create new tcp connection [{tcp_connection_key}]");
+                                    trace!(">>>> Create new tcp connection [{tcp_connection_key}]");
                                     let mut tcp_connection =
                                         TcpConnection::new(tcp_connection_key, tun_write_sender.clone(), tcp_connection_handle_repository.clone());
                                     let handle = entry.insert(tcp_connection.clone_tun_handle());

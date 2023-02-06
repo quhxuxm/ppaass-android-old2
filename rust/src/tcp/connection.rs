@@ -12,7 +12,7 @@ use crate::protect_socket;
 use super::{TcpConnectionKey, TcpConnectionStatus, TransmissionControlBlock};
 use anyhow::{anyhow, Result};
 use etherparse::{PacketBuilder, TcpHeader};
-use log::{debug, error};
+use log::{debug, error, trace};
 
 use rand::random;
 use tokio::{
@@ -77,7 +77,7 @@ impl TcpConnection {
         connection_key: TcpConnectionKey, tun_output_sender: Sender<Vec<u8>>,
         connection_repository: Arc<Mutex<HashMap<TcpConnectionKey, TcpConnectionTunHandle>>>,
     ) -> Self {
-        debug!(">>>> Create new tcp connection [{connection_key}]");
+        trace!(">>>> Create new tcp connection [{connection_key}]");
         let (tun_input_sender, tun_input_receiver) = channel(1024);
 
         let tun_handle = TcpConnectionTunHandle { tun_input_sender };
@@ -296,20 +296,6 @@ impl TcpConnection {
             ));
         }
 
-        if tcp_header.fin {
-            tcb.status = TcpConnectionStatus::CloseWait;
-
-            debug!(">>>> Tcp connection [{connection_key}] in [Established] status, receive FIN, switch to [CloseWait], current tcb: {tcb:?}",);
-            Self::send_ack_to_tun(connection_key, tcb.sequence_number, tcp_header.sequence_number + 1, tun_output_sender, None).await?;
-            tcb.acknowledgment_number = tcp_header.sequence_number + 1;
-
-            tcb.status = TcpConnectionStatus::LastAck;
-
-            debug!(">>>> Tcp connection [{connection_key}] in [CloseWait] status, switch to [LastAck], current tcb: {tcb:?}",);
-            Self::send_fin_ack_to_tun(connection_key, tcb.sequence_number, tcb.acknowledgment_number, tun_output_sender).await?;
-            return Ok(());
-        }
-
         // Relay from device to destination.
         let relay_data_length = payload.len();
         let relay_data_length: u32 = match relay_data_length.try_into() {
@@ -335,14 +321,34 @@ impl TcpConnection {
                 ));
             };
 
-            debug!(
+            trace!(
                 ">>>> Tcp connection [{connection_key}] success relay tun data [size={}] to destination:\n{}\n",
                 relay_data_length,
                 pretty_hex::pretty_hex(&payload)
             );
         }
 
-        debug!(">>>> Tcp connection [{connection_key}] keep in [Established], current tcb: {tcb:?}",);
+        if tcp_header.fin {
+            tcb.status = TcpConnectionStatus::CloseWait;
+
+            debug!(">>>> Tcp connection [{connection_key}] in [Established] status, receive FIN, switch to [CloseWait], current tcb: {tcb:?}",);
+            Self::send_ack_to_tun(
+                connection_key,
+                tcb.sequence_number,
+                tcp_header.sequence_number + relay_data_length + 1,
+                tun_output_sender,
+                None,
+            )
+            .await?;
+            tcb.acknowledgment_number = tcp_header.sequence_number + relay_data_length + 1;
+
+            tcb.status = TcpConnectionStatus::LastAck;
+
+            debug!(">>>> Tcp connection [{connection_key}] in [CloseWait] status, switch to [LastAck], current tcb: {tcb:?}",);
+            Self::send_fin_ack_to_tun(connection_key, tcb.sequence_number, tcb.acknowledgment_number, tun_output_sender).await?;
+            return Ok(());
+        }
+
         Self::send_ack_to_tun(
             connection_key,
             tcb.sequence_number,
@@ -551,7 +557,7 @@ impl TcpConnection {
                     error!("<<<< Tcp connection [{connection_key}] fail to generate ip packet write to tun device because of error: {e:?}");
                     continue;
                 };
-                debug!(
+                trace!(
                     "<<<< Tcp connection [{connection_key}] success relay destination data to tun:\n{}\n",
                     pretty_hex::pretty_hex(&dst_read_buf)
                 );
