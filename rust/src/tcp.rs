@@ -75,6 +75,5 @@ impl Display for TcpConnectionStatus {
 struct TransmissionControlBlock {
     pub sequence_number: u32,
     pub acknowledgment_number: u32,
-    pub window_size: u16,
     pub status: TcpConnectionStatus,
 }
