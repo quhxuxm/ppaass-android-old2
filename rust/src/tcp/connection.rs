@@ -309,11 +309,12 @@ impl TcpConnection {
         if tcp_header.fin {
             tcb.status = TcpConnectionStatus::CloseWait;
             tcb.acknowledgment_number += 1;
-            debug!(">>>> Tcp connection [{connection_key}] switch to [CloseWait], current tcb: {tcb:?}",);
+            debug!(">>>> Tcp connection [{connection_key}] in [Established] status, receive FIN, switch to [CloseWait], current tcb: {tcb:?}",);
             Self::send_ack_to_tun(connection_key, tcb, tun_output_sender, None).await?;
 
             tcb.status = TcpConnectionStatus::LastAck;
-            debug!(">>>> Tcp connection [{connection_key}] switch to [LastAck], current tcb: {tcb:?}",);
+
+            debug!(">>>> Tcp connection [{connection_key}] in [CloseWait] status, switch to [LastAck], current tcb: {tcb:?}",);
             Self::send_fin_ack_to_tun(connection_key, tcb, tun_output_sender).await?;
             return Ok(());
         }
@@ -446,20 +447,36 @@ impl TcpConnection {
         connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>,
         connection_repository: &Arc<Mutex<HashMap<TcpConnectionKey, TcpConnectionTunHandle>>>, tcp_header: TcpHeader,
     ) -> Result<()> {
-        if !tcp_header.ack && tcb.acknowledgment_number != tcp_header.sequence_number {
+        if !tcp_header.ack {
+            error!(">>>> Tcp connection [{connection_key}] fail to process [LastAck], expect ack=true, but get: {tcp_header:?}",);
+            return Err(anyhow!(
+                "Tcp connection [{connection_key}] fail to process [LastAck], expect ack=true,but get: {tcp_header:?}",
+            ));
+        }
+        if tcb.acknowledgment_number != tcp_header.sequence_number {
             error!(
-                ">>>> Tcp connection [{connection_key}] fail to process [LastAck], expect ack=true, sequence number={}, but get: {tcp_header:?}",
+                ">>>> Tcp connection [{connection_key}] fail to process [LastAck], expect sequence number={}, but get: {tcp_header:?}",
+                tcb.acknowledgment_number
+            );
+            return Err(anyhow!(
+                "Tcp connection [{connection_key}] fail to process [LastAck], expect sequence number={}, but get: {tcp_header:?}",
+                tcb.acknowledgment_number
+            ));
+        }
+        if tcb.sequence_number != tcp_header.acknowledgment_number {
+            error!(
+                ">>>> Tcp connection [{connection_key}] fail to process [LastAck], expect acknowledgment number={}, but get: {tcp_header:?}",
                 tcb.sequence_number
             );
             return Err(anyhow!(
-                "Tcp connection [{connection_key}] fail to process [LastAck], expect ack=true, sequence number={}, but get: {tcp_header:?}",
-                tcb.acknowledgment_number
+                "Tcp connection [{connection_key}] fail to process [LastAck], expect acknowledgment number={}, but get: {tcp_header:?}",
+                tcb.sequence_number
             ));
         }
         tcb.status = TcpConnectionStatus::Closed;
         let mut connection_repository = connection_repository.lock().await;
         connection_repository.remove(&connection_key);
-        debug!(">>>> Tcp connection [{connection_key}] switch to Closed status, remove from the connection repository.");
+        debug!(">>>> Tcp connection [{connection_key}] switch to [Closed] status, remove from the connection repository.");
         Ok(())
     }
 
@@ -474,9 +491,10 @@ impl TcpConnection {
     async fn on_close_wait(
         connection_key: TcpConnectionKey, tcb: &mut TransmissionControlBlock, tun_output_sender: &Sender<Vec<u8>>, tcp_header: TcpHeader,
     ) -> Result<()> {
+        debug!(">>>> Tcp connection [{connection_key}] in [CloseWait] status, switch to [LastAck], current tcb: {tcb:?}");
         Self::send_ack_to_tun(connection_key, tcb, tun_output_sender, None).await?;
         tcb.status = TcpConnectionStatus::LastAck;
-        debug!(">>>> Tcp connection [{connection_key}] switch to [LastAck], current tcb: {tcb:?}");
+        Self::send_fin_ack_to_tun(connection_key, tcb, tun_output_sender).await?;
         Ok(())
     }
 
