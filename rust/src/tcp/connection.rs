@@ -391,7 +391,7 @@ impl TcpConnection {
         tcb.sequence_number += 1;
 
         debug!(">>>> Tcp connection [{connection_key}] switch to [FinWait2], current tcb: {tcb:?}",);
-        Self::send_fin_ack_to_tun(connection_key, tcb, tun_output_sender).await?;
+
         Ok(())
     }
 
@@ -421,6 +421,16 @@ impl TcpConnection {
                 tcb.sequence_number
             ));
         }
+        if tcb.acknowledgment_number != tcp_header.sequence_number {
+            error!(
+                ">>>> Tcp connection [{connection_key}] fail to process [FinWait2], expect sequence number={}, but get: {tcp_header:?}",
+                tcb.acknowledgment_number
+            );
+            return Err(anyhow!(
+                "Tcp connection [{connection_key}] fail to process [FinWait2], expect sequence number={}, but get: {tcp_header:?}",
+                tcb.acknowledgment_number
+            ));
+        }
 
         tcb.status = TcpConnectionStatus::TimeWait;
 
@@ -435,11 +445,11 @@ impl TcpConnection {
             debug!(">>>> Tcp connection [{connection_key}] complete 2ML task switch to [Closed], current tcb: {tcb:?}",);
         });
 
-        tcb.sequence_number += 1;
         tcb.acknowledgment_number += 1;
 
         debug!(">>>> Tcp connection [{connection_key}] switch to [TimeWait], current tcb: {tcb:?}",);
         Self::send_ack_to_tun(connection_key, tcb, tun_output_sender, None).await?;
+
         Ok(())
     }
 
