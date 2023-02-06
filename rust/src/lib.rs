@@ -18,9 +18,12 @@ use once_cell::sync::OnceCell;
 use anyhow::Result;
 use server::PpaassVpnServer;
 
+mod device;
 mod server;
 mod tcp;
 mod udp;
+
+pub(crate) const IP_MTU: usize = 65535;
 
 pub(crate) static mut PPAASS_VPN_SERVER: OnceCell<PpaassVpnServer> = OnceCell::new();
 pub(crate) static mut JAVA_VPN_SERVICE_OBJ: OnceCell<GlobalRef> = OnceCell::new();

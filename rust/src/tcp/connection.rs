@@ -11,7 +11,7 @@ use crate::protect_socket;
 
 use super::{TcpConnectionKey, TcpConnectionStatus, TransmissionControlBlock};
 use anyhow::{anyhow, Result};
-use etherparse::{PacketBuilder, TcpHeader};
+
 use log::{debug, error, trace};
 
 use rand::random;
