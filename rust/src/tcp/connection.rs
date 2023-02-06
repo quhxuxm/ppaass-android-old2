@@ -212,7 +212,7 @@ impl TcpConnection {
         tcb.sequence_number = iss;
 
         Self::send_syn_ack_to_tun(connection_key, tcb.sequence_number, tcp_header.sequence_number + 1, tun_output_sender).await?;
-        tcb.acknowledgment_number = tcp_header.sequence_number + 1;
+
         debug!("<<<< Tcp connection [{connection_key}] switch to [SynReceived], current tcb: {tcb:?}",);
         Ok(())
     }
@@ -235,16 +235,6 @@ impl TcpConnection {
             ));
         }
         // Process the connection when the connection in SynReceived status
-        if tcp_header.sequence_number != tcb.acknowledgment_number {
-            error!(
-                ">>>> Tcp connection [{connection_key}] fail to process [SynReceived], expect sequence number={}, but get: {tcp_header:?}",
-                tcb.acknowledgment_number
-            );
-            return Err(anyhow!(
-                "Tcp connection [{connection_key}] fail to process [SynReceived], expect sequence number={}, but get: {tcp_header:?}",
-                tcb.acknowledgment_number
-            ));
-        }
 
         if tcp_header.acknowledgment_number != tcb.sequence_number + 1 {
             error!(
@@ -271,6 +261,7 @@ impl TcpConnection {
         tcb.status = TcpConnectionStatus::Established;
 
         tcb.sequence_number += 1;
+        tcb.acknowledgment_number = tcp_header.sequence_number;
 
         debug!(">>>> Tcp connection [{connection_key}] switch to [Established], current tcb: {tcb:?}",);
         Ok((dst_write, dst_relay_task_guard))
@@ -293,7 +284,7 @@ impl TcpConnection {
             ));
         }
 
-        if tcb.acknowledgment_number != tcp_header.sequence_number {
+        if tcb.acknowledgment_number > tcp_header.sequence_number {
             error!(
                 ">>>> Tcp connection [{connection_key}] fail to process [Established], expect acknowledgment number: {}, but get: {tcp_header:?}",
                 tcb.acknowledgment_number
@@ -309,8 +300,8 @@ impl TcpConnection {
             tcb.status = TcpConnectionStatus::CloseWait;
 
             debug!(">>>> Tcp connection [{connection_key}] in [Established] status, receive FIN, switch to [CloseWait], current tcb: {tcb:?}",);
-            Self::send_ack_to_tun(connection_key, tcb.sequence_number, tcb.acknowledgment_number + 1, tun_output_sender, None).await?;
-            tcb.acknowledgment_number += 1;
+            Self::send_ack_to_tun(connection_key, tcb.sequence_number, tcp_header.sequence_number + 1, tun_output_sender, None).await?;
+            tcb.acknowledgment_number = tcp_header.sequence_number + 1;
 
             tcb.status = TcpConnectionStatus::LastAck;
 
@@ -355,12 +346,12 @@ impl TcpConnection {
         Self::send_ack_to_tun(
             connection_key,
             tcb.sequence_number,
-            tcb.acknowledgment_number + relay_data_length,
+            tcp_header.sequence_number + relay_data_length,
             tun_output_sender,
             None,
         )
         .await?;
-        tcb.acknowledgment_number += relay_data_length;
+        tcb.acknowledgment_number = tcp_header.sequence_number + relay_data_length;
         Ok(())
     }
 
@@ -452,8 +443,8 @@ impl TcpConnection {
         });
 
         debug!(">>>> Tcp connection [{connection_key}] switch to [TimeWait], current tcb: {tcb:?}",);
-        Self::send_ack_to_tun(connection_key, tcb.sequence_number, tcb.acknowledgment_number + 1, tun_output_sender, None).await?;
-        tcb.acknowledgment_number += 1;
+        Self::send_ack_to_tun(connection_key, tcb.sequence_number, tcp_header.sequence_number + 1, tun_output_sender, None).await?;
+        tcb.acknowledgment_number = tcp_header.sequence_number + 1;
         Ok(())
     }
 
