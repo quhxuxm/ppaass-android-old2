@@ -21,7 +21,6 @@ use server::PpaassVpnServer;
 mod device;
 mod server;
 mod tcp;
-mod udp;
 
 pub(crate) const IP_MTU: usize = 65535;
 
