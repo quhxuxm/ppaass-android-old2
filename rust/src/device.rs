@@ -3,15 +3,16 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use log::debug;
+use log::{debug, trace};
 use smoltcp::{
     phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken},
     time::Instant,
+    wire::Ipv4Packet,
 };
 
 use uuid::Uuid;
 
-use crate::IP_MTU;
+use crate::{util::print_packet_bytes, IP_MTU};
 
 pub(crate) struct PpaassVpnRxToken {
     id: String,
@@ -20,7 +21,7 @@ pub(crate) struct PpaassVpnRxToken {
 
 impl PpaassVpnRxToken {
     fn new(raw_data: Vec<u8>) -> Self {
-        let id = format!(">==> RX[{}]", Uuid::new_v4().to_string().replace("-", ""));
+        let id = format!("R-{}", Uuid::new_v4().to_string().replace('-', ""));
         Self { id, raw_data }
     }
 }
@@ -32,15 +33,15 @@ impl Debug for PpaassVpnRxToken {
 }
 
 impl RxToken for PpaassVpnRxToken {
-    fn consume<R, F>(mut self, timestamp: Instant, f: F) -> smoltcp::Result<R>
+    fn consume<R, F>(mut self, f: F) -> R
     where
-        F: FnOnce(&mut [u8]) -> smoltcp::Result<R>,
+        F: FnOnce(&mut [u8]) -> R,
     {
         let result = f(&mut self.raw_data);
-        debug!(
+        trace!(
             ">>>> Ppaass vpn RX token [{}] receive data:\n{}",
             self.id,
-            pretty_hex::pretty_hex(&self.raw_data)
+            print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&self.raw_data)
         );
         result
     }
@@ -59,19 +60,23 @@ impl<'a> Debug for PpaassVpnTxToken<'a> {
 
 impl<'a> PpaassVpnTxToken<'a> {
     fn new(raw_data_queue: &'a mut VecDeque<Vec<u8>>) -> Self {
-        let id = format!("<==< TX[{}]", Uuid::new_v4().to_string().replace("-", ""));
+        let id = format!("T-{}", Uuid::new_v4().to_string().replace('-', ""));
         Self { id, raw_data_queue }
     }
 }
 
 impl<'a> TxToken for PpaassVpnTxToken<'a> {
-    fn consume<R, F>(self, timestamp: Instant, len: usize, f: F) -> smoltcp::Result<R>
+    fn consume<R, F>(self, len: usize, f: F) -> R
     where
-        F: FnOnce(&mut [u8]) -> smoltcp::Result<R>,
+        F: FnOnce(&mut [u8]) -> R,
     {
-        let mut raw_data = Vec::new();
+        let mut raw_data = vec![0; len];
         let result = f(&mut raw_data);
-        debug!("<<<< Ppaass vpn TX token [{}] transmit data:\n{}", self.id, pretty_hex::pretty_hex(&raw_data));
+        trace!(
+            "<<<< Ppaass vpn TX token [{}] transmit data:\n{}",
+            self.id,
+            print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&raw_data)
+        );
         self.raw_data_queue.push_back(raw_data);
         result
     }
@@ -98,33 +103,34 @@ impl PpaassVpnDevice {
     }
 }
 
-impl<'a> Device<'a> for PpaassVpnDevice {
-    type RxToken = PpaassVpnRxToken;
+impl Device for PpaassVpnDevice {
+    type RxToken<'a> = PpaassVpnRxToken;
 
-    type TxToken = PpaassVpnTxToken<'a>;
-
-    fn receive(&'a mut self) -> Option<(Self::RxToken, Self::TxToken)> {
-        match self.rx_queue.pop_front() {
-            None => None,
-            Some(raw_data) => {
-                let rx_token = PpaassVpnRxToken::new(raw_data);
-                let tx_token = PpaassVpnTxToken::new(&mut self.tx_queue);
-                debug!(">>>> Ppaass vpn device create RX token: {rx_token:?} and TX token: {tx_token:?}",);
-                Some((rx_token, tx_token))
-            },
-        }
-    }
-
-    fn transmit(&'a mut self) -> Option<Self::TxToken> {
-        let tx_token = PpaassVpnTxToken::new(&mut self.tx_queue);
-        debug!("<<<< Ppaass vpn device create TX token: {tx_token:?}",);
-        Some(tx_token)
-    }
+    type TxToken<'a> = PpaassVpnTxToken<'a>;
 
     fn capabilities(&self) -> DeviceCapabilities {
         let mut result = DeviceCapabilities::default();
         result.medium = Medium::Ip;
         result.max_transmission_unit = IP_MTU;
+
         result
+    }
+
+    fn receive(&mut self, timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
+        match self.rx_queue.pop_front() {
+            None => None,
+            Some(raw_data) => {
+                let rx_token = PpaassVpnRxToken::new(raw_data);
+                let tx_token = PpaassVpnTxToken::new(&mut self.tx_queue);
+                trace!(">>>> Ppaass vpn device create RX token: [{rx_token:?}] and TX token: [{tx_token:?}]",);
+                Some((rx_token, tx_token))
+            },
+        }
+    }
+
+    fn transmit(&mut self, timestamp: Instant) -> Option<Self::TxToken<'_>> {
+        let tx_token = PpaassVpnTxToken::new(&mut self.tx_queue);
+        trace!("<<<< Ppaass vpn device create TX token: {tx_token:?}",);
+        Some(tx_token)
     }
 }

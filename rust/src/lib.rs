@@ -21,10 +21,10 @@ use server::PpaassVpnServer;
 mod device;
 mod server;
 mod tcp;
+mod util;
 
-pub(crate) const IP_MTU: usize = 65535;
+pub(crate) const IP_MTU: usize = 1500;
 
-pub(crate) static mut PPAASS_VPN_SERVER: OnceCell<PpaassVpnServer> = OnceCell::new();
 pub(crate) static mut JAVA_VPN_SERVICE_OBJ: OnceCell<GlobalRef> = OnceCell::new();
 pub(crate) static mut JAVA_VPN_JVM: OnceCell<JavaVM> = OnceCell::new();
 
@@ -33,11 +33,6 @@ pub(crate) static mut JAVA_VPN_JVM: OnceCell<JavaVM> = OnceCell::new();
 /// This function should not be called before the horsemen are ready.
 #[no_mangle]
 pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_stopVpn(_jni_env: JNIEnv, _class: JClass) {
-    if let Some(mut ppaass_vpn_server) = unsafe { PPAASS_VPN_SERVER.take() } {
-        if let Err(e) = ppaass_vpn_server.stop() {
-            error!("Fail to stop ppaass vpn server because of error: {e:?}");
-        };
-    }
     JAVA_VPN_JVM.take();
     JAVA_VPN_SERVICE_OBJ.take();
 }
@@ -59,10 +54,7 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(
                 .expect("Fail to generate java vpn service object globale reference"),
         )
         .expect("Fail to save java vpn service object to global reference");
-    PPAASS_VPN_SERVER
-        .set(PpaassVpnServer::new(vpn_tun_device_fd).expect("Fail to generate ppaass vpn server."))
-        .expect("Fail to save ppaass vpn server to global reference.");
-    let ppaass_vpn_server = PPAASS_VPN_SERVER.get_mut().expect("Fail to get ppaass vpn server to global reference.");
+    let ppaass_vpn_server = PpaassVpnServer::new(vpn_tun_device_fd).expect("Fail to generate ppaass vpn server.");
     if let Err(e) = ppaass_vpn_server.start() {
         error!("Fail to start ppaass vpn server because of error: {e:?}");
     };
