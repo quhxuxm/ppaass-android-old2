@@ -8,6 +8,7 @@ use std::{
     io::{ErrorKind, Read},
     os::fd::FromRawFd,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Result};
@@ -16,7 +17,7 @@ use log::{debug, error, info, trace};
 
 use smoltcp::{
     iface::{Config, Interface, SocketSet},
-    socket::tcp,
+    socket::{tcp, Socket},
     time::Instant,
     wire::{Icmpv4Packet, IpAddress, IpCidr, IpProtocol, IpVersion, Ipv4Address, Ipv4Packet, TcpPacket, UdpPacket},
 };
@@ -91,42 +92,103 @@ impl PpaassVpnServer {
         async_runtime.block_on(async move {
             let (tun_read, tun_write) = Self::init_tun(tun_fd);
             let mut device = Self::init_device();
-            let mut iface = Self::init_interface(&mut device);
-
+            let mut iface = Arc::new(Mutex::new(Self::init_interface(&mut device)));
+            let device = Arc::new(Mutex::new(device));
             let mut vpn_tcp_connection_handle_repository: HashMap<VpnTcpConnectionKey, VpnTcpConnectionHandle> = Default::default();
-            let mut vpn_tcp_socketset = SocketSet::new(vec![]);
-            loop {
-                let tun_read_buf = {
-                    let mut tun_read_buf = vec![0; 65535];
-                    let mut tun_read = tun_read.lock().await;
-                    match tun_read.read(&mut tun_read_buf) {
-                        Ok(0) => {
-                            return Ok(());
-                        },
-                        Ok(size) => &tun_read_buf[..size],
-                        Err(e) => {
-                            if e.kind() == ErrorKind::WouldBlock {
-                                return Ok(());
+            let vpn_tcp_socketset = Arc::new(Mutex::new(SocketSet::new(vec![])));
+
+            let poll_iface_guard = {
+                let device = device.clone();
+                let vpn_tcp_socketset = vpn_tcp_socketset.clone();
+                let iface = iface.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let mut device = device.lock().await;
+                        let mut vpn_tcp_socketset = vpn_tcp_socketset.lock().await;
+                        let mut iface = iface.lock().await;
+                        let current_instant = Instant::now();
+                        iface.poll(current_instant, &mut *device, &mut vpn_tcp_socketset);
+                        'loop_socket: for (vpn_tcp_socket_handle, vpn_socket) in vpn_tcp_socketset.iter_mut() {
+                            match vpn_socket {
+                                Socket::Udp(udp_vpn_socket) => todo!(),
+                                Socket::Tcp(tcp_vpn_socket) => {
+                                    while tcp_vpn_socket.can_recv() {
+                                        let mut data = vec![0u8; 65536];
+                                        let data_size = match tcp_vpn_socket.recv_slice(&mut data) {
+                                            Ok(data_size) => data_size,
+                                            Err(e) => {
+                                                break 'loop_socket;
+                                            },
+                                        };
+                                        let data = &data[..data_size];
+                                    }
+                                },
+                                _ => {
+                                    continue;
+                                },
                             }
-                            error!(">>>> Fail to read data from tun because of error: {e:?}");
-                            return Err(anyhow!("Fail to read data from tun because of error: {e:?}"));
-                        },
-                    };
-                    tun_read_buf
-                };
-                if let Err(e) = Self::handle_tun_input(
-                    &tun_read_buf,
-                    &mut vpn_tcp_connection_handle_repository,
-                    &mut device,
-                    &mut iface,
-                    &mut vpn_tcp_socketset,
-                )
-                .await
-                {
-                    error!(">>>> Fail to handle tun input because of error: {e:?}")
-                };
-            }
-        })
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+            };
+            let iface_rx_guard = {
+                let device = device.clone();
+                let vpn_tcp_socketset = vpn_tcp_socketset.clone();
+                let iface = iface.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let tun_read_buf = {
+                            let mut tun_read_buf = vec![0; 65535];
+                            let mut tun_read = tun_read.lock().await;
+                            match tun_read.read(&mut tun_read_buf) {
+                                Ok(0) => {
+                                    return Ok(());
+                                },
+                                Ok(size) => &tun_read_buf[..size],
+                                Err(e) => {
+                                    if e.kind() == ErrorKind::WouldBlock {
+                                        continue;
+                                    }
+                                    error!(">>>> Fail to read data from tun because of error: {e:?}");
+                                    return Err(anyhow!("Fail to read data from tun because of error: {e:?}"));
+                                },
+                            };
+                            tun_read_buf
+                        };
+                        let mut device = device.lock().await;
+                        let mut vpn_tcp_socketset = vpn_tcp_socketset.lock().await;
+                        let mut iface = iface.lock().await;
+                        if let Err(e) = Self::handle_tun_input(
+                            &tun_read_buf,
+                            &mut vpn_tcp_connection_handle_repository,
+                            &mut device,
+                            &mut iface,
+                            &mut vpn_tcp_socketset,
+                        )
+                        .await
+                        {
+                            error!(">>>> Fail to handle tun input because of error: {e:?}")
+                        };
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+            };
+            let iface_tx_guard = {
+                tokio::spawn(async move {
+                    loop {
+                        let mut device = device.lock().await;
+                        let mut vpn_tcp_socketset = vpn_tcp_socketset.lock().await;
+                        let mut iface = iface.lock().await;
+                        let current_instant = Instant::now();
+                        iface.poll(current_instant, &mut *device, &mut vpn_tcp_socketset);
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+            };
+            let _ = tokio::join!(poll_iface_guard, iface_rx_guard, iface_tx_guard);
+        });
+        Ok(())
     }
 
     async fn handle_tun_input(
