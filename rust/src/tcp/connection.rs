@@ -1,33 +1,22 @@
 use std::{
-    collections::{HashMap, VecDeque},
     net::{IpAddr, SocketAddr},
     os::fd::AsRawFd,
-    sync::Arc,
-    task::Waker,
     time::Duration,
 };
 
 use anyhow::anyhow;
 use anyhow::Result;
 
-use futures::TryFutureExt;
 use log::{debug, error};
 use pretty_hex::pretty_hex;
 use smoltcp::{
     iface::{SocketHandle, SocketSet},
     socket::tcp::{Socket, SocketBuffer, State},
-    time::Instant,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
-    },
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Mutex,
-    },
+    io::AsyncReadExt,
+    net::tcp::OwnedWriteHalf,
+    sync::mpsc::{channel, Receiver, Sender},
     time::timeout,
 };
 
@@ -57,7 +46,7 @@ impl VpnTcpConnectionHandle {
         self.vpn_tcp_socket_handle
     }
 
-    pub async fn poll(&self, notification: VpnTcpConnectionNotification) -> Result<()> {
+    pub async fn notify(&self, notification: VpnTcpConnectionNotification) -> Result<()> {
         let vpn_tcp_connection_key = self.vpn_tcp_connection_key;
         self.notifier_sender.send(notification).await.map_err(|_| {
             error!(">>>> Fail to notify tcp connection [{vpn_tcp_connection_key}] because of error.");
@@ -236,133 +225,4 @@ impl VpnTcpConnection {
         });
         Ok(())
     }
-
-    // pub async fn process(&mut self) {
-    //     let vpn_socketset = self.vpn_socketset.clone();
-    //     let vpn_socket_handle = self.vpn_socket_handle;
-    //     let tcp_connection_key = self.tcp_connection_key;
-    //     let dst_write = self.dst_write.clone();
-    //     let tcp_connection_repository = self.tcp_connection_repository.clone();
-    //     let tcp_connection_notifier_repository = self.tcp_connection_notifier_repository.clone();
-    //     let dst_relay_data_buf = self.dst_relay_data_buf.clone();
-    //     let Some(mut notifier_receiver)=self.notifier_receiver.take() else{
-    //         return;
-    //     };
-
-    //     tokio::spawn(async move {
-    //         loop {
-    //             notifier_receiver.recv().await;
-    //             if let Err(e) = Self::handle_connection(
-    //                 vpn_socketset.clone(),
-    //                 vpn_socket_handle,
-    //                 tcp_connection_key,
-    //                 dst_write.clone(),
-    //                 dst_relay_data_buf.clone(),
-    //             )
-    //             .await
-    //             {
-    //                 error!("Error happen when handle connection, shutdown it: {e:?}");
-    //                 let mut vpn_socketset = vpn_socketset.lock().await;
-    //                 let vpn_socket = vpn_socketset.get_mut::<Socket>(vpn_socket_handle);
-    //                 vpn_socket.close();
-    //                 vpn_socketset.remove(vpn_socket_handle);
-    //                 let mut tcp_connection_repository = tcp_connection_repository.lock().await;
-    //                 tcp_connection_repository.remove(&tcp_connection_key);
-    //                 let mut tcp_connection_notifier_repository = tcp_connection_notifier_repository.lock().await;
-    //                 tcp_connection_notifier_repository.remove(&vpn_socket_handle);
-    //                 return;
-    //             };
-    //         }
-    //     });
-    // }
-
-    // async fn handle_connection(
-    //     vpn_socketset: Arc<Mutex<SocketSet<'static>>>, vpn_socket_handle: SocketHandle, tcp_connection_key: TcpConnectionKey,
-    //     dst_write: Arc<Mutex<Option<OwnedWriteHalf>>>, dst_relay_data_buf: Arc<Mutex<VecDeque<Vec<u8>>>>,
-    // ) -> Result<()> {
-    //     let mut vpn_socketset = vpn_socketset.lock().await;
-    //     let vpn_socket = vpn_socketset.get_mut::<Socket>(vpn_socket_handle);
-    //     debug!(">>>> Tcp connection [{}] current status: [{}].", tcp_connection_key, vpn_socket.state());
-    //     if vpn_socket.state() == State::SynReceived {
-    //         debug!(">>>> Tcp connection [{}] going to connect to destination.", tcp_connection_key);
-    //         let dst_socket = tokio::net::TcpSocket::new_v4()?;
-    //         let dst_socket_raw_fd = dst_socket.as_raw_fd();
-    //         protect_socket(dst_socket_raw_fd)?;
-    //         let dst_socket_addr = SocketAddr::new(IpAddr::V4(tcp_connection_key.dst_addr), tcp_connection_key.dst_port);
-    //         let concrete_dst_tcp_stream = timeout(Duration::from_secs(3), dst_socket.connect(dst_socket_addr)).await??;
-    //         let (mut concrete_dst_read, concrete_dst_write) = concrete_dst_tcp_stream.into_split();
-    //         let mut dst_write = dst_write.lock().await;
-    //         *dst_write = Some(concrete_dst_write);
-    //         debug!(">>>> Tcp connection [{tcp_connection_key}] connect to destination success.");
-    //         let dst_relay_data_buf = dst_relay_data_buf.clone();
-    //         tokio::spawn(async move {
-    //             debug!("<<<< Tcp connection [{tcp_connection_key}] begin to relay destination data.");
-    //             loop {
-    //                 let mut dst_read_buf = [0u8; 65535];
-    //                 let size = match concrete_dst_read.read(&mut dst_read_buf).await {
-    //                     Ok(0) => {
-    //                         debug!("<<<< Tcp connection [{tcp_connection_key}] read destination data complete.");
-    //                         return;
-    //                     },
-    //                     Ok(size) => size,
-    //                     Err(e) => {
-    //                         error!("<<<< Tcp connection [{tcp_connection_key}] fail to read destination data because of error: {e:?}");
-    //                         return;
-    //                     },
-    //                 };
-    //                 let dst_read_buf = &dst_read_buf[..size];
-    //                 debug!(
-    //                     "<<<< Tcp coneection [{tcp_connection_key}] receive destination data:\n{}\n",
-    //                     pretty_hex(&dst_read_buf)
-    //                 );
-    //                 let mut dst_relay_data_buf = dst_relay_data_buf.lock().await;
-    //                 dst_relay_data_buf.push_back(dst_read_buf.to_vec());
-    //             }
-    //         });
-    //         return Ok(());
-    //     }
-
-    //     if vpn_socket.can_recv() {
-    //         debug!(">>>> Tcp connection [{}] can receive on state: {}.", tcp_connection_key, vpn_socket.state());
-    //         let mut data = [0u8; 65536];
-    //         let size = match vpn_socket.recv_slice(&mut data) {
-    //             Ok(size) => size,
-    //             Err(e) => {
-    //                 error!(">>>> Tcp connection [{tcp_connection_key}] fail to receive data because of error: {e:?}");
-    //                 return Err(anyhow!("Tcp connection [{tcp_connection_key}] fail to receive data because of error: {e:?}"));
-    //             },
-    //         };
-    //         let data = &data[..size];
-
-    //         let mut dst_write = dst_write.lock().await;
-    //         if let Some(dst_write) = dst_write.as_mut() {
-    //             debug!(
-    //                 ">>>> Tcp connection [{tcp_connection_key}] receive tun data going to write to destination:\n{}\n",
-    //                 pretty_hex::pretty_hex(&data)
-    //             );
-    //             dst_write.write_all(data).await?;
-    //             dst_write.flush().await?;
-    //         }
-    //     }
-
-    //     let mut dst_relay_data_buf = dst_relay_data_buf.lock().await;
-    //     if vpn_socket.can_send() && dst_relay_data_buf.len() > 0 {
-    //         debug!(">>>> Tcp connection [{}] can send on state: {}.", tcp_connection_key, vpn_socket.state());
-    //         if let Some(dst_data) = dst_relay_data_buf.pop_front() {
-    //             dst_data.chunks(IP_MTU).for_each(|data| {
-    //                 if let Err(e) = vpn_socket.send_slice(data) {
-    //                     error!("<<<< Tcp connection [{tcp_connection_key}] fail to send destination data to tun because of error: {e:?}");
-    //                 };
-    //             });
-    //         }
-    //     }
-
-    //     if vpn_socket.state() == State::CloseWait && dst_relay_data_buf.len() == 0 {
-    //         vpn_socket.close();
-    //         vpn_socketset.remove(vpn_socket_handle);
-    //         error!("<<<< Tcp connection [{tcp_connection_key}] invoke close.");
-    //     }
-
-    //     Ok(())
-    // }
 }

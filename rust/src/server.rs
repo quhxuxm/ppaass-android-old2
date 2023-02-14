@@ -5,19 +5,18 @@ use std::{
     },
     fmt::Debug,
     fs::File,
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Read},
     os::fd::FromRawFd,
     sync::Arc,
-    time::Duration,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 
 use log::{debug, error, info, trace};
 
 use smoltcp::{
-    iface::{Config, Interface, SocketHandle, SocketSet, SocketStorage},
-    socket::{self, tcp},
+    iface::{Config, Interface, SocketSet},
+    socket::tcp,
     time::Instant,
     wire::{Icmpv4Packet, IpAddress, IpCidr, IpProtocol, IpVersion, Ipv4Address, Ipv4Packet, TcpPacket, UdpPacket},
 };
@@ -38,7 +37,6 @@ where
 {
     id: String,
     tun_fd: i32,
-    vpn_socketset: Arc<Mutex<SocketSet<'static>>>,
 }
 
 impl Debug for PpaassVpnServer {
@@ -54,12 +52,7 @@ impl PpaassVpnServer {
 
         info!("Create ppaass vpn server instance [{id}]");
 
-        Ok(Self {
-            id,
-            tun_fd,
-
-            vpn_socketset: Arc::new(Mutex::new(SocketSet::new(Vec::new()))),
-        })
+        Ok(Self { id, tun_fd })
     }
 
     fn init_interface(device: &mut PpaassVpnDevice) -> Interface {
@@ -101,7 +94,7 @@ impl PpaassVpnServer {
             let mut iface = Self::init_interface(&mut device);
 
             let mut vpn_tcp_connection_handle_repository: HashMap<VpnTcpConnectionKey, VpnTcpConnectionHandle> = Default::default();
-            let mut vpn_tcp_socket_set = SocketSet::new(vec![]);
+            let mut vpn_tcp_socketset = SocketSet::new(vec![]);
             loop {
                 let tun_read_buf = {
                     let mut tun_read_buf = vec![0; 65535];
@@ -126,7 +119,7 @@ impl PpaassVpnServer {
                     &mut vpn_tcp_connection_handle_repository,
                     &mut device,
                     &mut iface,
-                    &mut vpn_tcp_socket_set,
+                    &mut vpn_tcp_socketset,
                 )
                 .await
                 {
@@ -138,7 +131,7 @@ impl PpaassVpnServer {
 
     async fn handle_tun_input(
         tun_read_buf: &[u8], vpn_tcp_connection_handle_repository: &mut HashMap<VpnTcpConnectionKey, VpnTcpConnectionHandle>, device: &mut PpaassVpnDevice,
-        iface: &mut Interface, vpn_tcp_socket_set: &mut SocketSet<'_>,
+        iface: &mut Interface, vpn_tcp_socketset: &mut SocketSet<'_>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(tun_read_buf).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
@@ -174,7 +167,7 @@ impl PpaassVpnServer {
                 let vpn_tcp_connection_handle = match vpn_tcp_connection_handle_repository.entry(vpn_tcp_connection_key) {
                     Occupied(entry) => entry.into_mut(),
                     Vacant(entry) => {
-                        let (vpn_tcp_connection, vpn_tcp_connection_handle) = VpnTcpConnection::new(vpn_tcp_connection_key, vpn_tcp_socket_set)?;
+                        let (vpn_tcp_connection, vpn_tcp_connection_handle) = VpnTcpConnection::new(vpn_tcp_connection_key, vpn_tcp_socketset)?;
                         entry.insert(vpn_tcp_connection_handle);
                         if let Err(e) = vpn_tcp_connection.exec() {
                             error!(">>>> Tcp connection [{vpn_tcp_connection_key}] fail to execute because of error: {e:?}")
@@ -190,15 +183,15 @@ impl PpaassVpnServer {
                 device.push_rx(tun_read_buf.to_vec());
 
                 let poll_time = Instant::now();
-                if !iface.poll(poll_time, device, vpn_tcp_socket_set) {
+                if !iface.poll(poll_time, device, vpn_tcp_socketset) {
                     debug!(">>>> Tcp connection [{vpn_tcp_connection_key}] no tcp socket updated do next loop.");
                     return Ok(());
                 };
                 debug!(">>>> Tcp connection [{vpn_tcp_connection_key}] socket updated, poll connection.");
-                let vpn_tcp_socket = vpn_tcp_socket_set.get::<tcp::Socket>(vpn_tcp_connection_handle.get_socket_handle());
+                let vpn_tcp_socket = vpn_tcp_socketset.get::<tcp::Socket>(vpn_tcp_connection_handle.get_socket_handle());
 
                 if let Err(e) = vpn_tcp_connection_handle
-                    .poll(VpnTcpConnectionNotification {
+                    .notify(VpnTcpConnectionNotification {
                         tcp_socket_state: vpn_tcp_socket.state(),
                         can_receive: vpn_tcp_socket.can_recv(),
                         can_send: vpn_tcp_socket.can_recv(),
