@@ -5,7 +5,7 @@ use std::{
     },
     fmt::Debug,
     fs::File,
-    io::{ErrorKind, Read},
+    io::{ErrorKind, Read, Write},
     os::fd::FromRawFd,
     sync::Arc,
     time::Duration,
@@ -21,7 +21,10 @@ use smoltcp::{
     time::Instant,
     wire::{Icmpv4Packet, IpAddress, IpCidr, IpProtocol, IpVersion, Ipv4Address, Ipv4Packet, TcpPacket, UdpPacket},
 };
-use tokio::runtime::Builder as TokioRuntimeBuilder;
+use tokio::{
+    runtime::Builder as TokioRuntimeBuilder,
+    sync::mpsc::{channel, Receiver},
+};
 use tokio::{runtime::Runtime as TokioRuntime, sync::Mutex};
 
 use uuid::Uuid;
@@ -94,44 +97,10 @@ impl PpaassVpnServer {
             let mut device = Self::init_device();
             let mut iface = Arc::new(Mutex::new(Self::init_interface(&mut device)));
             let device = Arc::new(Mutex::new(device));
-            let mut vpn_tcp_connection_repository: Arc<Mutex<HashMap<VpnTcpConnectionKey, VpnTcpConnection>>> = Default::default();
+            let mut vpn_tcp_connection_repository: Arc<Mutex<HashMap<VpnTcpConnectionKey, (VpnTcpConnection, Receiver<Vec<u8>>)>>> = Default::default();
+            let mut vpn_tcp_socket_handle_repository: Arc<Mutex<HashMap<SocketHandle, VpnTcpConnectionKey>>> = Default::default();
             let vpn_tcp_socketset = Arc::new(Mutex::new(SocketSet::new(vec![])));
 
-            let poll_iface_guard = {
-                let device = device.clone();
-                let vpn_tcp_socketset = vpn_tcp_socketset.clone();
-                let iface = iface.clone();
-                tokio::spawn(async move {
-                    loop {
-                        let mut device = device.lock().await;
-                        let mut vpn_tcp_socketset = vpn_tcp_socketset.lock().await;
-                        let mut iface = iface.lock().await;
-                        let current_instant = Instant::now();
-                        iface.poll(current_instant, &mut *device, &mut vpn_tcp_socketset);
-                        'loop_socket: for (vpn_tcp_socket_handle, vpn_socket) in vpn_tcp_socketset.iter_mut() {
-                            match vpn_socket {
-                                Socket::Udp(udp_vpn_socket) => todo!(),
-                                Socket::Tcp(tcp_vpn_socket) => {
-                                    while tcp_vpn_socket.can_recv() {
-                                        let mut data = vec![0u8; 65536];
-                                        let data_size = match tcp_vpn_socket.recv_slice(&mut data) {
-                                            Ok(data_size) => data_size,
-                                            Err(e) => {
-                                                break 'loop_socket;
-                                            },
-                                        };
-                                        let data = &data[..data_size];
-                                    }
-                                },
-                                _ => {
-                                    continue;
-                                },
-                            }
-                        }
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                })
-            };
             let iface_rx_guard = {
                 let device = device.clone();
                 let vpn_tcp_socketset = vpn_tcp_socketset.clone();
@@ -167,26 +136,76 @@ impl PpaassVpnServer {
                     }
                 })
             };
-            let iface_tx_guard = {
+            let iface_io_guard = {
                 tokio::spawn(async move {
                     loop {
                         let mut device = device.lock().await;
                         let mut vpn_tcp_socketset = vpn_tcp_socketset.lock().await;
                         let mut iface = iface.lock().await;
                         let current_instant = Instant::now();
-                        iface.poll(current_instant, &mut *device, &mut vpn_tcp_socketset);
+                        if !iface.poll(current_instant, &mut *device, &mut vpn_tcp_socketset) {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        };
+                        for (vpn_tcp_sockethandle, vpn_tcp_socket) in vpn_tcp_socketset.iter_mut() {
+                            let vpn_tcp_socket_handle_repository = vpn_tcp_socket_handle_repository.lock().await;
+                            let vpn_tcp_connection_key = vpn_tcp_socket_handle_repository.get_mut(&vpn_tcp_sockethandle);
+                            let Some(vpn_tcp_connection_key) = vpn_tcp_connection_key else {
+                                continue;
+                            };
+                            let vpn_tcp_connection_repository = vpn_tcp_connection_repository.lock().await;
+                            let vpn_tcp_connection = vpn_tcp_connection_repository.get_mut(vpn_tcp_connection_key);
+                            let Some((vpn_tcp_connection, tun_tx_receiver)) = vpn_tcp_connection else {
+                                continue;
+                            };
+                            match vpn_tcp_socket {
+                                Socket::Udp(vpn_udp_socket) => todo!(),
+                                Socket::Tcp(vpn_tcp_socket) => {
+                                    while vpn_tcp_socket.can_recv() {
+                                        let mut rx_data = [0u8; 65535];
+                                        let rx_data_size = match vpn_tcp_socket.recv_slice(&mut rx_data) {
+                                            Ok(rx_data_size) => rx_data_size,
+                                            Err(e) => {
+                                                error!(">>>> Fail to receive tun data because of error: {e:?}");
+                                                continue;
+                                            },
+                                        };
+                                        let rx_data = &rx_data[..rx_data_size];
+                                        if let Err(e) = vpn_tcp_connection.tun_inbound(rx_data).await {
+                                            error!(">>>> Fail to receive forward tun data to connection inbound because of error: {e:?}");
+                                            continue;
+                                        };
+                                    }
+                                    while vpn_tcp_socket.can_send() {
+                                        let tun_tx_data = match tun_tx_receiver.try_recv() {
+                                            Ok(data) => data,
+                                            Err(Empty) => {
+                                                continue;
+                                            },
+                                            Err(Disconnect) => {
+                                                break;
+                                            },
+                                        };
+                                        let mut tun_write = tun_write.lock().await;
+                                        tun_write.write_all(&tun_tx_data);
+                                    }
+                                },
+                                _ => continue,
+                            };
+                        }
+
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 })
             };
-            let _ = tokio::join!(poll_iface_guard, iface_rx_guard, iface_tx_guard);
+            let _ = tokio::join!(iface_rx_guard, iface_io_guard);
         });
         Ok(())
     }
 
     async fn handle_tun_input(
         tun_read_buf: &[u8], device: &mut PpaassVpnDevice, iface: &mut Interface, vpn_tcp_socketset: Arc<Mutex<SocketSet<'static>>>,
-        vpn_tcp_connection_repository: Arc<Mutex<HashMap<VpnTcpConnectionKey, VpnTcpConnection>>>,
+        vpn_tcp_connection_repository: Arc<Mutex<HashMap<VpnTcpConnectionKey, (VpnTcpConnection, Receiver<Vec<u8>>)>>>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(tun_read_buf).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
@@ -220,11 +239,13 @@ impl PpaassVpnServer {
                 );
 
                 let mut vpn_tcp_connection_repository = vpn_tcp_connection_repository.lock().await;
-                let vpn_tcp_connection = match vpn_tcp_connection_repository.entry(vpn_tcp_connection_key) {
+                let (vpn_tcp_connection, tun_tx_receiver) = match vpn_tcp_connection_repository.entry(vpn_tcp_connection_key) {
                     Occupied(entry) => entry.into_mut(),
                     Vacant(entry) => {
-                        let (vpn_tcp_connection, socket_handle) = VpnTcpConnection::new(vpn_tcp_connection_key, vpn_tcp_socketset.clone()).await?;
-                        entry.insert(vpn_tcp_connection)
+                        let (tun_tx_sender, tun_tx_receiver) = channel::<Vec<u8>>(1024);
+                        let (vpn_tcp_connection, socket_handle) =
+                            VpnTcpConnection::new(vpn_tcp_connection_key, vpn_tcp_socketset.clone(), tun_tx_sender).await?;
+                        entry.insert((vpn_tcp_connection, tun_tx_receiver))
                     },
                 };
 
@@ -234,28 +255,9 @@ impl PpaassVpnServer {
                 );
                 device.push_rx(tun_read_buf.to_vec());
 
-                let has_socket_update = {
-                    let poll_time = Instant::now();
-                    let mut vpn_tcp_socketset = vpn_tcp_socketset.lock().await;
-                    iface.poll(poll_time, device, &mut vpn_tcp_socketset)
-                };
-
-                if !has_socket_update {
-                    return Ok(());
-                }
-                debug!(">>>> Tcp connection [{vpn_tcp_connection_key}] socket updated, poll connection.");
-                let vpn_tcp_connection = vpn_tcp_connection_repository.get_mut(&vpn_tcp_connection_key);
-                let Some(vpn_tcp_connection) = vpn_tcp_connection else{
-                    return Ok(());
-                };
+                let poll_time = Instant::now();
                 let mut vpn_tcp_socketset = vpn_tcp_socketset.lock().await;
-                let vpn_tcp_socket = vpn_tcp_socketset.get_mut::<tcp::Socket>(vpn_tcp_connection.get_vpn_tcp_socket_handle());
-                while vpn_tcp_socket.can_recv() {
-                    let mut rx_data = [0u8; 65535];
-                    let rx_data_size = vpn_tcp_socket.recv_slice(&mut rx_data)?;
-                    let rx_data = &rx_data[..rx_data_size];
-                    vpn_tcp_connection.inbound(rx_data).await;
-                }
+                iface.poll(poll_time, device, &mut vpn_tcp_socketset);
             },
             IpProtocol::Udp => {
                 let ipv4_packet_payload = ipv4_packet.payload();
