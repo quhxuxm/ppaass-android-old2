@@ -5,8 +5,6 @@ use std::{
 
 mod connection;
 pub(crate) use connection::VpnTcpConnection;
-pub(crate) use connection::VpnTcpConnectionHandle;
-pub(crate) use connection::VpnTcpConnectionNotification;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct VpnTcpConnectionKey {

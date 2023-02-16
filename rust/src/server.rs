@@ -32,7 +32,7 @@ use uuid::Uuid;
 use crate::{
     device::PpaassVpnDevice,
     tcp::{VpnTcpConnection, VpnTcpConnectionKey},
-    util::print_packet,
+    util::{print_packet, print_packet_bytes},
 };
 
 pub(crate) struct PpaassVpnServer
@@ -95,10 +95,10 @@ impl PpaassVpnServer {
         async_runtime.block_on(async move {
             let (tun_read, tun_write) = Self::init_tun(tun_fd);
             let mut device = Self::init_device();
-            let mut iface = Arc::new(Mutex::new(Self::init_interface(&mut device)));
+            let iface = Arc::new(Mutex::new(Self::init_interface(&mut device)));
             let device = Arc::new(Mutex::new(device));
-            let mut vpn_tcp_connection_repository: Arc<Mutex<HashMap<VpnTcpConnectionKey, (VpnTcpConnection, Receiver<Vec<u8>>)>>> = Default::default();
-            let mut vpn_tcp_socket_handle_repository: Arc<Mutex<HashMap<SocketHandle, VpnTcpConnectionKey>>> = Default::default();
+            let vpn_tcp_connection_repository: Arc<Mutex<HashMap<VpnTcpConnectionKey, (VpnTcpConnection, Receiver<Vec<u8>>)>>> = Default::default();
+            let vpn_tcp_socket_handle_repository: Arc<Mutex<HashMap<SocketHandle, VpnTcpConnectionKey>>> = Default::default();
             let vpn_tcp_socketset = Arc::new(Mutex::new(SocketSet::new(vec![])));
 
             let iface_rx_guard = {
@@ -118,6 +118,8 @@ impl PpaassVpnServer {
                                 Ok(size) => &tun_read_buf[..size],
                                 Err(e) => {
                                     if e.kind() == ErrorKind::WouldBlock {
+                                        drop(tun_read);
+                                        tokio::time::sleep(Duration::from_millis(100)).await;
                                         continue;
                                     }
                                     error!(">>>> Fail to read data from tun because of error: {e:?}");
@@ -129,14 +131,102 @@ impl PpaassVpnServer {
                         let mut device = device.lock().await;
 
                         let mut iface = iface.lock().await;
-                        if let Err(e) = Self::handle_tun_input(&tun_read_buf, &mut device, &mut iface, vpn_tcp_socketset, vpn_tcp_connection_repository).await {
+                        if let Err(e) = Self::handle_tun_input(
+                            &tun_read_buf,
+                            &mut device,
+                            &mut iface,
+                            vpn_tcp_socketset.clone(),
+                            vpn_tcp_connection_repository.clone(),
+                        )
+                        .await
+                        {
                             error!(">>>> Fail to handle tun input because of error: {e:?}")
+                        };
+                        drop(device);
+                        drop(iface);
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+            };
+
+            let iface_tx_guard = {
+                let device = device.clone();
+
+                tokio::spawn(async move {
+                    loop {
+                        let mut device = device.lock().await;
+                        let Some(ipv4_packet_bytes) = device.pop_tx() else {
+                            drop(device);
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        };
+                        let mut tun_write = tun_write.lock().await;
+                        let ipv4_packet = match Ipv4Packet::new_checked(&ipv4_packet_bytes) {
+                            Ok(ipv4_packet) => ipv4_packet,
+                            Err(e) => {
+                                drop(tun_write);
+                                drop(device);
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                continue;
+                            },
+                        };
+
+                        let transport_protocol = ipv4_packet.next_header();
+                        match transport_protocol {
+                            IpProtocol::Udp => {
+                                debug!("<<<< Ignore udp packet to tun:\n{}\n", print_packet(&ipv4_packet));
+                                continue;
+                            },
+                            IpProtocol::Tcp => {
+                                let ipv4_packet_payload = ipv4_packet.payload();
+                                let tcp_packet = match TcpPacket::new_checked(ipv4_packet_payload) {
+                                    Ok(tcp_packet) => tcp_packet,
+                                    Err(e) => {
+                                        drop(tun_write);
+                                        drop(device);
+                                        tokio::time::sleep(Duration::from_millis(100)).await;
+                                        continue;
+                                    },
+                                };
+                                let vpn_tcp_connection_key = VpnTcpConnectionKey::new(
+                                    ipv4_packet.dst_addr().into(),
+                                    tcp_packet.dst_port(),
+                                    ipv4_packet.src_addr().into(),
+                                    tcp_packet.src_port(),
+                                );
+                                debug!(
+                                    "<<<< Tcp connection [{vpn_tcp_connection_key}] transmit tcp packet to tun:\n{}\n",
+                                    print_packet(&ipv4_packet)
+                                );
+                            },
+                            _ => {
+                                drop(tun_write);
+                                drop(device);
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                continue;
+                            },
+                        }
+
+                        if let Err(e) = tun_write.write_all(&ipv4_packet_bytes) {
+                            error!("<<<< Fail to write device transmit data to tun because of error: {e:?}");
+                            drop(device);
+                            drop(tun_write);
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        };
+                        if let Err(e) = tun_write.flush() {
+                            error!("<<<< Fail to flush device transmit data to tun because of error: {e:?}");
+                            drop(device);
+                            drop(tun_write);
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
                         };
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 })
             };
-            let iface_io_guard = {
+
+            let relay_guard = {
                 tokio::spawn(async move {
                     loop {
                         let mut device = device.lock().await;
@@ -144,16 +234,20 @@ impl PpaassVpnServer {
                         let mut iface = iface.lock().await;
                         let current_instant = Instant::now();
                         if !iface.poll(current_instant, &mut *device, &mut vpn_tcp_socketset) {
+                            drop(device);
+                            drop(vpn_tcp_socketset);
+                            drop(iface);
                             tokio::time::sleep(Duration::from_millis(100)).await;
                             continue;
                         };
+                        debug!(">>>> Poll iface complete going to check vpn tcp socket read and write");
                         for (vpn_tcp_sockethandle, vpn_tcp_socket) in vpn_tcp_socketset.iter_mut() {
-                            let vpn_tcp_socket_handle_repository = vpn_tcp_socket_handle_repository.lock().await;
+                            let mut vpn_tcp_socket_handle_repository = vpn_tcp_socket_handle_repository.lock().await;
                             let vpn_tcp_connection_key = vpn_tcp_socket_handle_repository.get_mut(&vpn_tcp_sockethandle);
                             let Some(vpn_tcp_connection_key) = vpn_tcp_connection_key else {
                                 continue;
                             };
-                            let vpn_tcp_connection_repository = vpn_tcp_connection_repository.lock().await;
+                            let mut vpn_tcp_connection_repository = vpn_tcp_connection_repository.lock().await;
                             let vpn_tcp_connection = vpn_tcp_connection_repository.get_mut(vpn_tcp_connection_key);
                             let Some((vpn_tcp_connection, tun_tx_receiver)) = vpn_tcp_connection else {
                                 continue;
@@ -162,6 +256,7 @@ impl PpaassVpnServer {
                                 Socket::Udp(vpn_udp_socket) => todo!(),
                                 Socket::Tcp(vpn_tcp_socket) => {
                                     while vpn_tcp_socket.can_recv() {
+                                        debug!(">>>> Tcp connection [{vpn_tcp_connection_key}] can do receive.");
                                         let mut rx_data = [0u8; 65535];
                                         let rx_data_size = match vpn_tcp_socket.recv_slice(&mut rx_data) {
                                             Ok(rx_data_size) => rx_data_size,
@@ -177,6 +272,7 @@ impl PpaassVpnServer {
                                         };
                                     }
                                     while vpn_tcp_socket.can_send() {
+                                        debug!("<<<< Tcp connection [{vpn_tcp_connection_key}] can do send.");
                                         let tun_tx_data = match tun_tx_receiver.try_recv() {
                                             Ok(data) => data,
                                             Err(Empty) => {
@@ -186,19 +282,22 @@ impl PpaassVpnServer {
                                                 break;
                                             },
                                         };
-                                        let mut tun_write = tun_write.lock().await;
-                                        tun_write.write_all(&tun_tx_data);
+                                        if let Err(e) = vpn_tcp_socket.send_slice(&tun_tx_data) {
+                                            error!("<<<< Fail to forward destination data to vpn device because of error: {e:?}")
+                                        };
                                     }
                                 },
                                 _ => continue,
                             };
                         }
-
+                        drop(device);
+                        drop(vpn_tcp_socketset);
+                        drop(iface);
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 })
             };
-            let _ = tokio::join!(iface_rx_guard, iface_io_guard);
+            let _ = tokio::join!(iface_rx_guard, iface_tx_guard, relay_guard);
         });
         Ok(())
     }
