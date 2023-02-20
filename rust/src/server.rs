@@ -25,7 +25,7 @@ use smoltcp::{
 use std::sync::Mutex as StdMutex;
 use tokio::{
     runtime::Builder as TokioRuntimeBuilder,
-    sync::mpsc::{channel, Receiver},
+    sync::mpsc::{channel, Receiver, Sender},
     time::Duration as TokioDuration,
     time::Instant as TokioInstant,
 };
@@ -122,8 +122,8 @@ impl PpaassVpnServer {
     }
 
     async fn handle_tun_input(
-        tun_read_buf: &[u8], device: &mut PpaassVpnDevice, iface: &mut Interface, vpn_tcp_socketset: Arc<Mutex<SocketSet<'static>>>,
-        vpn_tcp_connection_repository: Arc<Mutex<HashMap<VpnTcpConnectionKey, (VpnTcpConnection, Receiver<Vec<u8>>)>>>,
+        tun_read_buf: &[u8], tcp_connection_repository: &mut HashMap<VpnTcpConnectionKey, (VpnTcpConnection, Sender<Vec<u8>>, Receiver<Vec<u8>>)>,
+        sockets: &mut SocketSet<'static>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(tun_read_buf).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
@@ -149,33 +149,28 @@ impl PpaassVpnServer {
 
                 debug!(">>>> Receive tcp packet from tun:\n{}\n", print_packet(&ipv4_packet));
 
-                let vpn_tcp_connection_key = VpnTcpConnectionKey::new(
+                let tcp_connection_key = VpnTcpConnectionKey::new(
                     ipv4_packet.src_addr().into(),
                     tcp_packet.src_port(),
                     ipv4_packet.dst_addr().into(),
                     tcp_packet.dst_port(),
                 );
 
-                let mut vpn_tcp_connection_repository = vpn_tcp_connection_repository.lock().await;
-                let (vpn_tcp_connection, tun_tx_receiver) = match vpn_tcp_connection_repository.entry(vpn_tcp_connection_key) {
+                let vpn_tcp_connection = match tcp_connection_repository.entry(tcp_connection_key) {
                     Occupied(entry) => entry.into_mut(),
                     Vacant(entry) => {
-                        let (tun_tx_sender, tun_tx_receiver) = channel::<Vec<u8>>(1024);
-                        let (vpn_tcp_connection, socket_handle) =
-                            VpnTcpConnection::new(vpn_tcp_connection_key, vpn_tcp_socketset.clone(), tun_tx_sender).await?;
-                        entry.insert((vpn_tcp_connection, tun_tx_receiver))
+                        let (tun_read_sender, tun_read_receiver) = channel::<Vec<u8>>(1024);
+                        let (tun_write_sender, tun_write_receiver) = channel::<Vec<u8>>(1024);
+                        let tcp_connection = VpnTcpConnection::new(tcp_connection_key, sockets, tun_read_receiver, tun_write_sender)?;
+                        tun_read_sender.send(value)
+                        entry.insert((tcp_connection, tun_read_sender, tun_write_receiver))
                     },
                 };
 
                 debug!(
-                    ">>>> Tcp connection [{vpn_tcp_connection_key}] push tun data into vpn device:\n{}\n",
+                    ">>>> Tcp connection [{tcp_connection_key}] push tun data into vpn device:\n{}\n",
                     print_packet(&ipv4_packet)
                 );
-                device.push_rx(tun_read_buf.to_vec());
-
-                let poll_time = Instant::now();
-                let mut vpn_tcp_socketset = vpn_tcp_socketset.lock().await;
-                iface.poll(poll_time, device, &mut vpn_tcp_socketset);
             },
             IpProtocol::Udp => {
                 let ipv4_packet_payload = ipv4_packet.payload();

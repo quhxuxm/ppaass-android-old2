@@ -39,12 +39,14 @@ pub enum VpnTcpConnectionState {
 pub(crate) struct VpnTcpConnection {
     connection_key: VpnTcpConnectionKey,
     socket_handle: SocketHandle,
-    tun_rx_sender: Sender<Vec<u8>>,
-    tun_tx_sender: Sender<Vec<u8>>,
+    tun_read_receiver: Receiver<Vec<u8>>,
+    tun_write_sender: Sender<Vec<u8>>,
 }
 
 impl VpnTcpConnection {
-    pub fn new(connection_key: VpnTcpConnectionKey, sockets: &mut SocketSet<'static>, tun_tx_sender: Sender<Vec<u8>>) -> Result<Self> {
+    pub fn new(
+        connection_key: VpnTcpConnectionKey, sockets: &mut SocketSet<'static>, tun_read_receiver: Receiver<Vec<u8>>, tun_write_sender: Sender<Vec<u8>>,
+    ) -> Result<Self> {
         let listen_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
 
         let socket_handle = {
@@ -58,12 +60,11 @@ impl VpnTcpConnection {
         };
         let (tun_rx_sender, tun_rx_receiver) = channel::<Vec<u8>>(1024);
 
-    
         Ok(Self {
             connection_key,
             socket_handle,
-            tun_rx_sender,
-            tun_tx_sender,
+            tun_read_receiver,
+            tun_write_sender,
         })
     }
 }
