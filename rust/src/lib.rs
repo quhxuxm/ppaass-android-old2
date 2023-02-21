@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::{panic, process};
+
 use android_logger::Config;
 
 use anyhow::anyhow;
@@ -54,6 +56,7 @@ pub unsafe extern "C" fn Java_com_ppaass_agent_rust_jni_RustLibrary_startVpn(
                 .expect("Fail to generate java vpn service object globale reference"),
         )
         .expect("Fail to save java vpn service object to global reference");
+
     let ppaass_vpn_server = PpaassVpnServer::new(vpn_tun_device_fd).expect("Fail to generate ppaass vpn server.");
     if let Err(e) = ppaass_vpn_server.start() {
         error!("Fail to start ppaass vpn server because of error: {e:?}");

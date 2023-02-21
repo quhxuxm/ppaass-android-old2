@@ -51,7 +51,7 @@ public class PpaassVpnService extends VpnService {
                     int nativeVpnFileDescriptor = vpnFd.detachFd();
                     Log.d(PpaassVpnService.class.getName(), "Ppaass Vpn native file descriptor: "+nativeVpnFileDescriptor);
                     RustLibrary.startVpn(nativeVpnFileDescriptor, this);
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     Log.e(PpaassVpnService.class.getName(), "Stop Ppaass Vpn thread because of exception.", e);
                     return;
                 }

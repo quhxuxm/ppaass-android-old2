@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     fmt::{Debug, Formatter},
-    sync::mpsc::Sender,
 };
 
 use log::{debug, error, trace};
@@ -11,6 +10,7 @@ use smoltcp::{
     wire::Ipv4Packet,
 };
 
+use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
 
 use crate::{util::print_packet_bytes, IP_MTU};
@@ -78,9 +78,13 @@ impl<'a> TxToken for PpaassVpnTxToken<'a> {
             self.id,
             print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&raw_data)
         );
-        if let Err(e) = self.tx_sender.send(raw_data) {
-            error!("<<<< Fail to send device data to tx sender because of error: {e:?}");
-        };
+        let tx_sender = self.tx_sender.clone();
+        tokio::spawn(async move {
+            if let Err(e) = tx_sender.send(raw_data).await {
+                error!("<<<< Fail to send device data to tx sender because of error: {e:?}");
+            };
+        });
+
         result
     }
 }
