@@ -1,7 +1,10 @@
 use std::{
     net::{IpAddr, SocketAddr},
     os::fd::AsRawFd,
-    sync::Arc,
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -17,10 +20,6 @@ use smoltcp::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::tcp::OwnedReadHalf,
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Mutex,
-    },
     time::timeout,
 };
 
@@ -40,13 +39,12 @@ pub(crate) struct VpnTcpConnection {
     connection_key: VpnTcpConnectionKey,
     socket_handle: SocketHandle,
     tun_read_receiver: Receiver<Vec<u8>>,
-    tun_write_sender: Sender<Vec<u8>>,
 }
 
 impl VpnTcpConnection {
     pub fn new(
-        connection_key: VpnTcpConnectionKey, sockets: &mut SocketSet<'static>, tun_read_receiver: Receiver<Vec<u8>>, tun_write_sender: Sender<Vec<u8>>,
-    ) -> Result<Self> {
+        connection_key: VpnTcpConnectionKey, sockets: &mut SocketSet<'static>, tun_read_receiver: Receiver<Vec<u8>>,
+    ) -> Result<(Self, Receiver<Vec<u8>>)> {
         let listen_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
 
         let socket_handle = {
@@ -58,13 +56,20 @@ impl VpnTcpConnection {
 
             sockets.add(socket)
         };
-        let (tun_rx_sender, tun_rx_receiver) = channel::<Vec<u8>>(1024);
 
-        Ok(Self {
-            connection_key,
-            socket_handle,
-            tun_read_receiver,
-            tun_write_sender,
-        })
+        let (dst_read_sender, dst_read_receiver) = channel();
+
+        Ok((
+            Self {
+                connection_key,
+                socket_handle,
+                tun_read_receiver,
+            },
+            dst_read_receiver,
+        ))
+    }
+
+    pub fn get_socket_handle(&self) -> SocketHandle {
+        self.socket_handle
     }
 }
