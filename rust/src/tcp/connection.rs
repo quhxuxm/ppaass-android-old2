@@ -8,38 +8,30 @@ use anyhow::anyhow;
 use anyhow::Result;
 
 use log::{debug, error, info};
-use pretty_hex::pretty_hex;
+
 use smoltcp::{
     iface::{SocketHandle, SocketSet},
     socket::tcp::{Socket, SocketBuffer},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::tcp::OwnedReadHalf,
     sync::mpsc::{channel, Receiver},
     time::timeout,
 };
 
 use crate::protect_socket;
 
-use super::VpnTcpConnectionKey;
-
-#[derive(Debug, Default)]
-pub enum VpnTcpConnectionState {
-    #[default]
-    New,
-    Initialized,
-}
+use super::TcpConnectionKey;
 
 #[derive(Debug)]
-pub(crate) struct VpnTcpConnection {
-    connection_key: VpnTcpConnectionKey,
+pub(crate) struct TcpConnection {
+    connection_key: TcpConnectionKey,
     socket_handle: SocketHandle,
 }
 
-impl VpnTcpConnection {
+impl TcpConnection {
     pub fn new(
-        connection_key: VpnTcpConnectionKey,
+        connection_key: TcpConnectionKey,
         sockets: &mut SocketSet<'static>,
         mut tun_read_receiver: Receiver<Vec<u8>>,
     ) -> Result<(Self, Receiver<Vec<u8>>)> {

@@ -47,12 +47,12 @@ use uuid::Uuid;
 
 use crate::{
     device::PpaassVpnDevice,
-    tcp::{VpnTcpConnection, VpnTcpConnectionKey},
+    tcp::{TcpConnection, TcpConnectionKey},
     util::{print_packet, print_packet_bytes},
 };
 
 struct VpnTcpConnectionRepositoryEntry {
-    vpn_tcp_connection: VpnTcpConnection,
+    vpn_tcp_connection: TcpConnection,
     tun_read_sender: Sender<Vec<u8>>,
     dst_read_receiver: Receiver<Vec<u8>>,
 }
@@ -129,8 +129,8 @@ impl PpaassVpnServer {
         info!("Ready to prepare tun read & write");
         let async_runtime = Self::init_async_runtime();
         async_runtime.block_on(async move {
-            let mut vpn_tcp_connection_repository: HashMap<VpnTcpConnectionKey, VpnTcpConnectionRepositoryEntry> = Default::default();
-            let mut socket_handle_and_vpn_tcp_connection_mapping: HashMap<SocketHandle, VpnTcpConnectionKey> = Default::default();
+            let mut vpn_tcp_connection_repository: HashMap<TcpConnectionKey, VpnTcpConnectionRepositoryEntry> = Default::default();
+            let mut socket_handle_and_vpn_tcp_connection_mapping: HashMap<SocketHandle, TcpConnectionKey> = Default::default();
             let (tun_write_sender, mut tun_write_receiver) = channel::<Vec<u8>>(1024);
             let mut device = Self::init_device(tun_write_sender);
             let mut iface = Self::init_interface(&mut device);
@@ -279,13 +279,10 @@ impl PpaassVpnServer {
     fn handle_tun_input(
         tun_read_buf: &[u8],
         vpn_tcp_connection_repository: &mut HashMap<
-            VpnTcpConnectionKey,
+            TcpConnectionKey,
             VpnTcpConnectionRepositoryEntry,
         >,
-        socket_handle_and_vpn_tcp_connection_mapping: &mut HashMap<
-            SocketHandle,
-            VpnTcpConnectionKey,
-        >,
+        socket_handle_and_vpn_tcp_connection_mapping: &mut HashMap<SocketHandle, TcpConnectionKey>,
         sockets: &mut SocketSet<'static>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(tun_read_buf).map_err(|e| {
@@ -315,7 +312,7 @@ impl PpaassVpnServer {
                     print_packet(&ipv4_packet)
                 );
 
-                let tcp_connection_key = VpnTcpConnectionKey::new(
+                let tcp_connection_key = TcpConnectionKey::new(
                     ipv4_packet.src_addr().into(),
                     tcp_packet.src_port(),
                     ipv4_packet.dst_addr().into(),
@@ -326,7 +323,7 @@ impl PpaassVpnServer {
                     let (tun_read_sender, tun_read_receiver) = channel::<Vec<u8>>(1024);
 
                     let (vpn_tcp_connection, dst_read_receiver) =
-                        VpnTcpConnection::new(tcp_connection_key, sockets, tun_read_receiver)?;
+                        TcpConnection::new(tcp_connection_key, sockets, tun_read_receiver)?;
                     let socket_handle = vpn_tcp_connection.get_socket_handle();
                     entry.insert(VpnTcpConnectionRepositoryEntry {
                         vpn_tcp_connection,
