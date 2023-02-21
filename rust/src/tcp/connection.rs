@@ -39,12 +39,18 @@ pub(crate) struct VpnTcpConnection {
 
 impl VpnTcpConnection {
     pub fn new(
-        connection_key: VpnTcpConnectionKey, sockets: &mut SocketSet<'static>, mut tun_read_receiver: Receiver<Vec<u8>>,
+        connection_key: VpnTcpConnectionKey,
+        sockets: &mut SocketSet<'static>,
+        mut tun_read_receiver: Receiver<Vec<u8>>,
     ) -> Result<(Self, Receiver<Vec<u8>>)> {
-        let listen_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
+        let listen_addr =
+            SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
 
         let socket_handle = {
-            let mut socket = Socket::new(SocketBuffer::new(vec![0; 655350]), SocketBuffer::new(vec![0; 655350]));
+            let mut socket = Socket::new(
+                SocketBuffer::new(vec![0; 655350]),
+                SocketBuffer::new(vec![0; 655350]),
+            );
 
             socket
                 .listen::<SocketAddr>(listen_addr)
@@ -62,24 +68,30 @@ impl VpnTcpConnection {
                 Err(e) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to generate tokio tcp socket because of error: {e:?}");
                     return;
-                },
+                }
             };
             let dst_socket_raw_fd = dst_socket.as_raw_fd();
             if let Err(e) = protect_socket(dst_socket_raw_fd) {
                 error!(">>>> Tcp connection [{connection_key}] fail to protect tokio tcp socket because of error: {e:?}");
                 return;
             };
-            let dst_socket_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
-            let dst_tcp_stream = match timeout(Duration::from_secs(5), dst_socket.connect(dst_socket_addr)).await {
+            let dst_socket_addr =
+                SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
+            let dst_tcp_stream = match timeout(
+                Duration::from_secs(5),
+                dst_socket.connect(dst_socket_addr),
+            )
+            .await
+            {
                 Ok(Ok(concrete_dst_tcp_stream)) => concrete_dst_tcp_stream,
                 Ok(Err(e)) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of error: {e:?}");
                     return;
-                },
+                }
                 Err(_) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of timeout");
                     return;
-                },
+                }
             };
             let (mut dst_tcp_read, mut dst_tcp_write) = dst_tcp_stream.into_split();
             tokio::spawn(async move {
@@ -91,7 +103,7 @@ impl VpnTcpConnection {
                         Err(e) => {
                             error!("Fail to read destination data because of error: {e:?}");
                             break;
-                        },
+                        }
                     };
                     let dst_read_buf = &dst_read_buf[..size];
                     if let Err(e) = dst_read_sender.send(dst_read_buf.to_vec()).await {
@@ -107,7 +119,7 @@ impl VpnTcpConnection {
                     None => {
                         error!(">>>> Tcp connection [{connection_key}] closed from input side.");
                         break;
-                    },
+                    }
                 };
                 if let Err(e) = dst_tcp_write.write(&tun_read_data).await {
                     error!(">>>> Tcp connection [{connection_key}] fail to write tun date to destination because of error: {e:?}");
@@ -120,7 +132,13 @@ impl VpnTcpConnection {
             }
         });
 
-        Ok((Self { connection_key, socket_handle }, dst_read_receiver))
+        Ok((
+            Self {
+                connection_key,
+                socket_handle,
+            },
+            dst_read_receiver,
+        ))
     }
 
     pub fn get_socket_handle(&self) -> SocketHandle {

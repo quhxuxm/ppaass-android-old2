@@ -24,13 +24,16 @@ use smoltcp::{
         Socket,
     },
     time::Instant as SmoltcpInstant,
-    wire::{Icmpv4Packet, IpAddress, IpCidr, IpProtocol, IpVersion, Ipv4Address, Ipv4Packet, TcpPacket, UdpPacket},
+    wire::{
+        Icmpv4Packet, IpAddress, IpCidr, IpProtocol, IpVersion, Ipv4Address, Ipv4Packet, TcpPacket,
+        UdpPacket,
+    },
 };
 
 use tokio::{
     runtime::Builder as TokioRuntimeBuilder,
     sync::{
-        mpsc::{channel, Receiver, error::TryRecvError},
+        mpsc::{channel, error::TryRecvError, Receiver},
         Mutex as TokioMutex,
     },
     time::Duration as TokioDuration,
@@ -64,7 +67,10 @@ where
 
 impl Debug for PpaassVpnServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PpaassVpnServer").field("id", &self.id).field("tun_fd", &self.tun_fd).finish()
+        f.debug_struct("PpaassVpnServer")
+            .field("id", &self.id)
+            .field("tun_fd", &self.tun_fd)
+            .finish()
     }
 }
 
@@ -84,9 +90,14 @@ impl PpaassVpnServer {
         let mut iface = Interface::new(ifrace_config, device);
         iface.set_any_ip(true);
         iface.update_ip_addrs(|ip_addrs| {
-            ip_addrs.push(IpCidr::new(IpAddress::v4(0, 0, 0, 1), 24)).unwrap();
+            ip_addrs
+                .push(IpCidr::new(IpAddress::v4(0, 0, 0, 1), 24))
+                .unwrap();
         });
-        iface.routes_mut().add_default_ipv4_route(Ipv4Address::new(0, 0, 0, 1)).unwrap();
+        iface
+            .routes_mut()
+            .add_default_ipv4_route(Ipv4Address::new(0, 0, 0, 1))
+            .unwrap();
         iface
     }
 
@@ -96,7 +107,10 @@ impl PpaassVpnServer {
 
     fn init_async_runtime() -> TokioRuntime {
         let mut runtime_builder = TokioRuntimeBuilder::new_multi_thread();
-        runtime_builder.worker_threads(32).enable_all().thread_name("PPAASS-RUST-THREAD");
+        runtime_builder
+            .worker_threads(32)
+            .enable_all()
+            .thread_name("PPAASS-RUST-THREAD");
         // .unhandled_panic(UnhandledPanic::ShutdownRuntime);
         runtime_builder.build().expect("Fail to start vpn runtime.")
     }
@@ -160,7 +174,6 @@ impl PpaassVpnServer {
                                 break;
                             }
                         }
-                     
                     },
                 };
                 drop(tun_read);
@@ -264,8 +277,16 @@ impl PpaassVpnServer {
     }
 
     fn handle_tun_input(
-        tun_read_buf: &[u8], vpn_tcp_connection_repository: &mut HashMap<VpnTcpConnectionKey, VpnTcpConnectionRepositoryEntry>,
-        socket_handle_and_vpn_tcp_connection_mapping: &mut HashMap<SocketHandle, VpnTcpConnectionKey>, sockets: &mut SocketSet<'static>,
+        tun_read_buf: &[u8],
+        vpn_tcp_connection_repository: &mut HashMap<
+            VpnTcpConnectionKey,
+            VpnTcpConnectionRepositoryEntry,
+        >,
+        socket_handle_and_vpn_tcp_connection_mapping: &mut HashMap<
+            SocketHandle,
+            VpnTcpConnectionKey,
+        >,
+        sockets: &mut SocketSet<'static>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(tun_read_buf).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
@@ -289,7 +310,10 @@ impl PpaassVpnServer {
                     anyhow!("Fail to parse ip v4 packet payload to tcp packet because of error: {e:?}")
                 })?;
 
-                debug!(">>>> Receive tcp packet from tun:\n{}\n", print_packet(&ipv4_packet));
+                debug!(
+                    ">>>> Receive tcp packet from tun:\n{}\n",
+                    print_packet(&ipv4_packet)
+                );
 
                 let tcp_connection_key = VpnTcpConnectionKey::new(
                     ipv4_packet.src_addr().into(),
@@ -301,40 +325,48 @@ impl PpaassVpnServer {
                 if let Vacant(entry) = vpn_tcp_connection_repository.entry(tcp_connection_key) {
                     let (tun_read_sender, tun_read_receiver) = channel::<Vec<u8>>(1024);
 
-                    let (vpn_tcp_connection, dst_read_receiver) = VpnTcpConnection::new(tcp_connection_key, sockets, tun_read_receiver)?;
+                    let (vpn_tcp_connection, dst_read_receiver) =
+                        VpnTcpConnection::new(tcp_connection_key, sockets, tun_read_receiver)?;
                     let socket_handle = vpn_tcp_connection.get_socket_handle();
                     entry.insert(VpnTcpConnectionRepositoryEntry {
                         vpn_tcp_connection,
                         tun_read_sender,
                         dst_read_receiver,
                     });
-                    socket_handle_and_vpn_tcp_connection_mapping.insert(socket_handle, tcp_connection_key);
+                    socket_handle_and_vpn_tcp_connection_mapping
+                        .insert(socket_handle, tcp_connection_key);
                 };
 
                 debug!(
                     ">>>> Tcp connection [{tcp_connection_key}] push tun data into vpn device:\n{}\n",
                     print_packet(&ipv4_packet)
                 );
-            },
+            }
             IpProtocol::Udp => {
                 let ipv4_packet_payload = ipv4_packet.payload();
                 let udp_packet = UdpPacket::new_checked(ipv4_packet_payload).map_err(|e| {
                     error!(">>>> Fail to parse ip v4 packet payload to udp packet because of error: {e:?}");
                     anyhow!("Fail to parse ip v4 packet payload to udp packet because of error: {e:?}")
                 })?;
-                debug!(">>>> Receive udp packet from tun:\n{}\n", print_packet(&ipv4_packet));
-            },
+                debug!(
+                    ">>>> Receive udp packet from tun:\n{}\n",
+                    print_packet(&ipv4_packet)
+                );
+            }
             IpProtocol::Icmp => {
                 let ipv4_packet_payload = ipv4_packet.payload();
                 let icmpv4_packet = Icmpv4Packet::new_checked(ipv4_packet_payload).map_err(|e| {
                     error!(">>>> Fail to parse ip v4 packet payload to icmpv4 packet because of error: {e:?}");
                     anyhow!("Fail to parse ip v4 packet payload to icmpv4 packet because of error: {e:?}")
                 })?;
-                debug!(">>>> Receive icmpv4 packet from tun:\n{}\n", print_packet(&ipv4_packet));
-            },
+                debug!(
+                    ">>>> Receive icmpv4 packet from tun:\n{}\n",
+                    print_packet(&ipv4_packet)
+                );
+            }
             other => {
                 trace!(">>>> Unsupport protocol: {other}");
-            },
+            }
         };
 
         Ok(())
