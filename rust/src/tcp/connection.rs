@@ -24,6 +24,12 @@ use crate::protect_socket;
 use super::TcpConnectionKey;
 
 #[derive(Debug)]
+pub(crate) enum TcpConnectionToTunCommand {
+    CloseSocket,
+    DestinationData(Vec<u8>),
+}
+
+#[derive(Debug)]
 pub(crate) struct TcpConnection {
     connection_key: TcpConnectionKey,
     socket_handle: SocketHandle,
@@ -34,7 +40,7 @@ impl TcpConnection {
         connection_key: TcpConnectionKey,
         sockets: &mut SocketSet<'static>,
         mut tun_read_receiver: Receiver<Vec<u8>>,
-    ) -> Result<(Self, Receiver<Vec<u8>>)> {
+    ) -> Result<(Self, Receiver<TcpConnectionToTunCommand>)> {
         let listen_addr =
             SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
 
@@ -51,7 +57,8 @@ impl TcpConnection {
             sockets.add(socket)
         };
 
-        let (dst_read_sender, dst_read_receiver) = channel::<Vec<u8>>(1024);
+        let (connection_to_tun_socket_command_sender, connection_to_tun_socket_command_receiver) =
+            channel::<TcpConnectionToTunCommand>(1024);
         info!("Create vpn tcp connection [{connection_key}]");
         tokio::spawn(async move {
             debug!(">>>> Tcp connection [{connection_key}] going to connect to destination.");
@@ -75,53 +82,110 @@ impl TcpConnection {
             )
             .await
             {
-                Ok(Ok(concrete_dst_tcp_stream)) => concrete_dst_tcp_stream,
+                Ok(Ok(dst_tcp_stream)) => dst_tcp_stream,
                 Ok(Err(e)) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of error: {e:?}");
+                    if let Err(e) = connection_to_tun_socket_command_sender
+                        .send(TcpConnectionToTunCommand::CloseSocket)
+                        .await
+                    {
+                        error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
+                    };
                     return;
                 }
                 Err(_) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of timeout");
+                    if let Err(e) = connection_to_tun_socket_command_sender
+                        .send(TcpConnectionToTunCommand::CloseSocket)
+                        .await
+                    {
+                        error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
+                    };
                     return;
                 }
             };
             let (mut dst_tcp_read, mut dst_tcp_write) = dst_tcp_stream.into_split();
-            tokio::spawn(async move {
-                debug!("<<<< Tcp connection [{connection_key}] start destination relay task.");
-                loop {
-                    let mut dst_read_buf = [0u8; 65535];
-                    let size = match dst_tcp_read.read(&mut dst_read_buf).await {
-                        Ok(0) => break,
-                        Ok(size) => size,
-                        Err(e) => {
-                            error!("<<<< Fail to read destination data because of error: {e:?}");
-                            break;
-                        }
-                    };
-                    let dst_read_buf = &dst_read_buf[..size];
-                    if let Err(e) = dst_read_sender.send(dst_read_buf.to_vec()).await {
-                        error!(
+            {
+                let connection_to_tun_socket_command_sender =
+                    connection_to_tun_socket_command_sender.clone();
+                tokio::spawn(async move {
+                    debug!("<<<< Tcp connection [{connection_key}] start destination relay task.");
+                    loop {
+                        let mut dst_read_buf = [0u8; 65535];
+                        let size = match dst_tcp_read.read(&mut dst_read_buf).await {
+                            Ok(0) => {
+                                if let Err(e) = connection_to_tun_socket_command_sender
+                                    .send(TcpConnectionToTunCommand::CloseSocket)
+                                    .await
+                                {
+                                    error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
+                                };
+                                break;
+                            }
+                            Ok(size) => size,
+                            Err(e) => {
+                                error!("<<<< Tcp connection [{connection_key}] fail to read destination data because of error: {e:?}");
+                                if let Err(e) = connection_to_tun_socket_command_sender
+                                    .send(TcpConnectionToTunCommand::CloseSocket)
+                                    .await
+                                {
+                                    error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
+                                };
+                                break;
+                            }
+                        };
+                        let dst_read_buf = &dst_read_buf[..size];
+                        if let Err(e) = connection_to_tun_socket_command_sender
+                            .send(TcpConnectionToTunCommand::DestinationData(
+                                dst_read_buf.to_vec(),
+                            ))
+                            .await
+                        {
+                            error!(
                             "<<<< Fail to send destination data to socket because of error: {e:?}"
                         );
-                        break;
-                    };
-                }
-            });
-            let tun_read_receiver = &mut tun_read_receiver;
+                            break;
+                        };
+                    }
+                });
+            }
+            // let tun_read_receiver = &mut tun_read_receiver;
             loop {
                 let tun_read_data = match tun_read_receiver.recv().await {
                     Some(tun_read_data) => tun_read_data,
                     None => {
                         error!(">>>> Tcp connection [{connection_key}] closed from input side.");
+                        if let Err(e) = connection_to_tun_socket_command_sender
+                            .send(TcpConnectionToTunCommand::CloseSocket)
+                            .await
+                        {
+                            error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
+                        };
                         break;
                     }
                 };
                 if let Err(e) = dst_tcp_write.write(&tun_read_data).await {
                     error!(">>>> Tcp connection [{connection_key}] fail to write tun date to destination because of error: {e:?}");
+                    if let Err(e) = connection_to_tun_socket_command_sender
+                        .send(TcpConnectionToTunCommand::CloseSocket)
+                        .await
+                    {
+                        error!(
+                            "<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}"
+                        );
+                    };
                     continue;
                 };
                 if let Err(e) = dst_tcp_write.flush().await {
                     error!(">>>> Tcp connection [{connection_key}] fail to flush tun date to destination because of error: {e:?}");
+                    if let Err(e) = connection_to_tun_socket_command_sender
+                        .send(TcpConnectionToTunCommand::CloseSocket)
+                        .await
+                    {
+                        error!(
+                            "<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}"
+                        );
+                    };
                     continue;
                 };
             }
@@ -132,7 +196,7 @@ impl TcpConnection {
                 connection_key,
                 socket_handle,
             },
-            dst_read_receiver,
+            connection_to_tun_socket_command_receiver,
         ))
     }
 

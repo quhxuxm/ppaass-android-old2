@@ -5,6 +5,7 @@ use std::{
 
 mod connection;
 pub(crate) use connection::TcpConnection;
+pub(crate) use connection::TcpConnectionToTunCommand;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TcpConnectionKey {

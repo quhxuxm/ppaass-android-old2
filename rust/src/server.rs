@@ -36,14 +36,14 @@ use uuid::Uuid;
 
 use crate::{
     device::PpaassVpnDevice,
-    tcp::{TcpConnection, TcpConnectionKey},
+    tcp::{TcpConnection, TcpConnectionKey, TcpConnectionToTunCommand},
     util::print_packet,
 };
 
 struct TcpConnectionRepositoryEntry {
     vpn_tcp_connection: TcpConnection,
     tun_read_sender: Sender<Vec<u8>>,
-    dst_read_receiver: Receiver<Vec<u8>>,
+    tcp_connection_to_tun_command_receiver: Receiver<TcpConnectionToTunCommand>,
 }
 
 pub(crate) struct PpaassVpnServer
@@ -149,26 +149,27 @@ impl PpaassVpnServer {
             });
             info!("Start task for read data from tun device on server [{server_id}]");
             loop {
-                let mut tun_read = tun_read.lock().await;
-                let mut tun_read_buf = [0u8; 65535];
-                let tun_read_buf_size = match tun_read.read(&mut tun_read_buf) {
-                    Ok(tun_read_buf_size) => tun_read_buf_size,
-                    Err(e) => {
-                        match e.kind() {
-                            ErrorKind::WouldBlock=>{
-                                continue;
+                let tun_read_buf = {
+                    let mut tun_read = tun_read.lock().await;
+                    let mut tun_read_buf = [0u8; 65535];
+                    let tun_read_buf_size = match tun_read.read(&mut tun_read_buf) {
+                        Ok(tun_read_buf_size) => tun_read_buf_size,
+                        Err(e) => {
+                            match e.kind() {
+                                ErrorKind::WouldBlock=>{
+                                    continue;
+                                }
+                                _=>{
+                                    error!(">>>> Fail to read tun data because of error: {e:?}");
+                                    break;
+                                }
                             }
-                            _=>{
-                                error!(">>>> Fail to read tun data because of error: {e:?}");
-                                break;
-                            }
-                        }
-                    },
+                        },
+                    };
+                    tun_read_buf[..tun_read_buf_size].to_vec()
                 };
-                drop(tun_read);
-                let tun_read_buf = &tun_read_buf[..tun_read_buf_size];
                 if let Err(e) = Self::handle_tun_input(
-                    tun_read_buf,
+                    &tun_read_buf,
                     &mut vpn_tcp_connection_repository,
                     &mut socket_handle_and_vpn_tcp_connection_mapping,
                     &mut sockets,
@@ -218,31 +219,35 @@ impl PpaassVpnServer {
 
                             while tcp_socket.can_recv() {
                                 let mut tun_read_data = [0u8;65535];
-                               let size= match tcp_socket.recv_slice(&mut tun_read_data){
+                                let size= match tcp_socket.recv_slice(&mut tun_read_data){
                                     Ok(size) => size,
                                     Err(e) => {
-                                         error!(">>>> Fail to send received tun data to vpn tcp connection [{tcp_connection_key}] and close tcp socket because of error: {e:?}");
-                                     tcp_socket.close();
-                                     continue;
+                                        error!(">>>> Fail to send received tun data to vpn tcp connection [{tcp_connection_key}] and close tcp socket because of error: {e:?}");
+                                        tcp_socket.close();
+                                        break;
                                     },
                                 };
-                                if size ==0{
-                                    break;
-                                }
+                             
                                 let tun_read_data=&tun_read_data[..size];
-                                   debug!(">>>> Tcp connection [{tcp_connection_key}] going to send tun data to destination:\n{}\n", pretty_hex(&tun_read_data));
-                                 if let Err(e) = vpn_tcp_connection_repository_entry.tun_read_sender.send(tun_read_data.to_vec()).await {
+                                debug!(">>>> Tcp connection [{tcp_connection_key}] going to send tun data to destination:\n{}\n", pretty_hex(&tun_read_data));
+                                if let Err(e) = vpn_tcp_connection_repository_entry.tun_read_sender.send(tun_read_data.to_vec()).await {
                                         error!(">>>> Fail to send received tun data to vpn tcp connection [{tcp_connection_key}] because of error: {e:?}");
                                     };
                             }
                             while tcp_socket.can_send() {
-                                 let data= match vpn_tcp_connection_repository_entry.dst_read_receiver.try_recv(){
-                                    Ok(data) => data,
+                                 let data= match vpn_tcp_connection_repository_entry.
+                                 tcp_connection_to_tun_command_receiver.try_recv(){
+                                    Ok(TcpConnectionToTunCommand::CloseSocket) => {
+                                        tcp_socket.close();
+                                        break;
+                                    },
+                                    Ok(TcpConnectionToTunCommand::DestinationData(data))=>data,
                                     Err(TryRecvError::Empty) => {
                                         break;
                                     },
                                     Err(TryRecvError::Disconnected) => {
                                         error!(">>>> Fail to send destination data from vpn tcp connection [{tcp_connection_key}] to tcp socket because of receiver disconnected.");
+                                        tcp_socket.close();
                                         break;
                                     },
                                 };
@@ -252,7 +257,6 @@ impl PpaassVpnServer {
                                 };
                             }
                         },
-
                         _ => {
                             error!(">>>> Other socket still not support.");
                             continue;
@@ -314,7 +318,7 @@ impl PpaassVpnServer {
                     entry.insert(TcpConnectionRepositoryEntry {
                         vpn_tcp_connection,
                         tun_read_sender,
-                        dst_read_receiver,
+                        tcp_connection_to_tun_command_receiver: dst_read_receiver,
                     });
                     socket_handle_and_vpn_tcp_connection_mapping
                         .insert(socket_handle, tcp_connection_key);
