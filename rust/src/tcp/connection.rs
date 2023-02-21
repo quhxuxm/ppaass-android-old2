@@ -87,19 +87,22 @@ impl TcpConnection {
             };
             let (mut dst_tcp_read, mut dst_tcp_write) = dst_tcp_stream.into_split();
             tokio::spawn(async move {
+                debug!("<<<< Tcp connection [{connection_key}] start destination relay task.");
                 loop {
                     let mut dst_read_buf = [0u8; 65535];
                     let size = match dst_tcp_read.read(&mut dst_read_buf).await {
                         Ok(0) => break,
                         Ok(size) => size,
                         Err(e) => {
-                            error!("Fail to read destination data because of error: {e:?}");
+                            error!("<<<< Fail to read destination data because of error: {e:?}");
                             break;
                         }
                     };
                     let dst_read_buf = &dst_read_buf[..size];
                     if let Err(e) = dst_read_sender.send(dst_read_buf.to_vec()).await {
-                        error!("Fail to send destination data to socket because of error: {e:?}");
+                        error!(
+                            "<<<< Fail to send destination data to socket because of error: {e:?}"
+                        );
                         break;
                     };
                 }

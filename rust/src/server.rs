@@ -1,15 +1,10 @@
 use std::{
-    cell::RefCell,
-    collections::{
-        hash_map::Entry::{Occupied, Vacant},
-        HashMap,
-    },
+    collections::{hash_map::Entry::Vacant, HashMap},
     fmt::Debug,
     fs::File,
     io::{ErrorKind, Read, Write},
     os::fd::FromRawFd,
     sync::Arc,
-    time::{Duration, SystemTime},
 };
 
 use anyhow::{anyhow, Result};
@@ -19,10 +14,7 @@ use log::{debug, error, info, trace};
 use pretty_hex::pretty_hex;
 use smoltcp::{
     iface::{Config, Interface, SocketHandle, SocketSet},
-    socket::{
-        tcp::{self, State},
-        Socket,
-    },
+    socket::{tcp::State, Socket},
     time::Instant as SmoltcpInstant,
     wire::{
         Icmpv4Packet, IpAddress, IpCidr, IpProtocol, IpVersion, Ipv4Address, Ipv4Packet, TcpPacket,
@@ -39,19 +31,16 @@ use tokio::{
     time::Duration as TokioDuration,
     time::Instant as TokioInstant,
 };
-use tokio::{
-    runtime::{Runtime as TokioRuntime, UnhandledPanic},
-    sync::mpsc::Sender,
-};
+use tokio::{runtime::Runtime as TokioRuntime, sync::mpsc::Sender};
 use uuid::Uuid;
 
 use crate::{
     device::PpaassVpnDevice,
     tcp::{TcpConnection, TcpConnectionKey},
-    util::{print_packet, print_packet_bytes},
+    util::print_packet,
 };
 
-struct VpnTcpConnectionRepositoryEntry {
+struct TcpConnectionRepositoryEntry {
     vpn_tcp_connection: TcpConnection,
     tun_read_sender: Sender<Vec<u8>>,
     dst_read_receiver: Receiver<Vec<u8>>,
@@ -129,7 +118,7 @@ impl PpaassVpnServer {
         info!("Ready to prepare tun read & write");
         let async_runtime = Self::init_async_runtime();
         async_runtime.block_on(async move {
-            let mut vpn_tcp_connection_repository: HashMap<TcpConnectionKey, VpnTcpConnectionRepositoryEntry> = Default::default();
+            let mut vpn_tcp_connection_repository: HashMap<TcpConnectionKey, TcpConnectionRepositoryEntry> = Default::default();
             let mut socket_handle_and_vpn_tcp_connection_mapping: HashMap<SocketHandle, TcpConnectionKey> = Default::default();
             let (tun_write_sender, mut tun_write_receiver) = channel::<Vec<u8>>(1024);
             let mut device = Self::init_device(tun_write_sender);
@@ -278,10 +267,7 @@ impl PpaassVpnServer {
 
     fn handle_tun_input(
         tun_read_buf: &[u8],
-        vpn_tcp_connection_repository: &mut HashMap<
-            TcpConnectionKey,
-            VpnTcpConnectionRepositoryEntry,
-        >,
+        vpn_tcp_connection_repository: &mut HashMap<TcpConnectionKey, TcpConnectionRepositoryEntry>,
         socket_handle_and_vpn_tcp_connection_mapping: &mut HashMap<SocketHandle, TcpConnectionKey>,
         sockets: &mut SocketSet<'static>,
     ) -> Result<()> {
@@ -325,7 +311,7 @@ impl PpaassVpnServer {
                     let (vpn_tcp_connection, dst_read_receiver) =
                         TcpConnection::new(tcp_connection_key, sockets, tun_read_receiver)?;
                     let socket_handle = vpn_tcp_connection.get_socket_handle();
-                    entry.insert(VpnTcpConnectionRepositoryEntry {
+                    entry.insert(TcpConnectionRepositoryEntry {
                         vpn_tcp_connection,
                         tun_read_sender,
                         dst_read_receiver,
