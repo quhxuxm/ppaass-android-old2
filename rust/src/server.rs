@@ -190,14 +190,15 @@ impl PpaassVpnServer {
                 }
               
                 let mut socket_handles_to_remove = vec![];
-                for (socket_handle, socket) in sockets.iter() {
+                for (socket_handle, socket) in sockets.iter_mut() {
                     if let Socket::Tcp(tcp_socket) = socket {
                         if let Some(tcp_connection_key)=socket_handle_and_vpn_tcp_connection_mapping.get(&socket_handle){
                             debug!("Tcp connection [{tcp_connection_key}] current state: {}", tcp_socket.state())
                         };
                    
-                        if tcp_socket.state() == State::Closed {
+                        if tcp_socket.state() == State::CloseWait {
                             socket_handles_to_remove.push(socket_handle);
+                            tcp_socket.close();
                         }
                     }
                 }
