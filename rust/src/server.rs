@@ -188,10 +188,14 @@ impl PpaassVpnServer {
                     tokio::time::sleep_until(wait_until).await;
                     continue;
                 }
-                //Do something
+              
                 let mut socket_handles_to_remove = vec![];
                 for (socket_handle, socket) in sockets.iter() {
                     if let Socket::Tcp(tcp_socket) = socket {
+                        if let Some(tcp_connection_key)=socket_handle_and_vpn_tcp_connection_mapping.get(&socket_handle){
+                            debug!("Tcp connection [{tcp_connection_key}] current state: {}", tcp_socket.state())
+                        };
+                   
                         if tcp_socket.state() == State::Closed {
                             socket_handles_to_remove.push(socket_handle);
                         }
@@ -199,6 +203,10 @@ impl PpaassVpnServer {
                 }
                 for socket_handle in socket_handles_to_remove {
                     sockets.remove(socket_handle);
+                   if let Some(connection_key) = socket_handle_and_vpn_tcp_connection_mapping.remove(&socket_handle){
+                      vpn_tcp_connection_repository.remove(&connection_key);
+                      debug!("Tcp connection [{connection_key}] removed from vpn, connection closed.")
+                   };
                 }
 
                 for (socket_handle, socket) in sockets.iter_mut() {
@@ -210,11 +218,11 @@ impl PpaassVpnServer {
                         Socket::Tcp(tcp_socket) => {
                             let tcp_connection_key = socket_handle_and_vpn_tcp_connection_mapping.get(&socket_handle);
                             let Some(tcp_connection_key) = tcp_connection_key else {
-                                continue;
+                                break;
                             };
                             let vpn_tcp_connection_repository_entry = vpn_tcp_connection_repository.get_mut(tcp_connection_key);
                             let Some( vpn_tcp_connection_repository_entry) = vpn_tcp_connection_repository_entry else {
-                                continue;
+                                break;
                             };
 
                             while tcp_socket.can_recv() {
@@ -222,12 +230,11 @@ impl PpaassVpnServer {
                                 let size= match tcp_socket.recv_slice(&mut tun_read_data){
                                     Ok(size) => size,
                                     Err(e) => {
-                                        error!(">>>> Fail to send received tun data to vpn tcp connection [{tcp_connection_key}] and close tcp socket because of error: {e:?}");
-                                        tcp_socket.close();
+                                         tcp_socket.close();
+                                        error!(">>>> Fail to send received tun data to vpn tcp connection [{tcp_connection_key}] and close tcp socket because of error: {e:?}, socket state: {}", tcp_socket.state());
                                         break;
                                     },
                                 };
-                             
                                 let tun_read_data=&tun_read_data[..size];
                                 debug!(">>>> Tcp connection [{tcp_connection_key}] going to send tun data to destination:\n{}\n", pretty_hex(&tun_read_data));
                                 if let Err(e) = vpn_tcp_connection_repository_entry.tun_read_sender.send(tun_read_data.to_vec()).await {
@@ -239,6 +246,7 @@ impl PpaassVpnServer {
                                  tcp_connection_to_tun_command_receiver.try_recv(){
                                     Ok(TcpConnectionToTunCommand::CloseSocket) => {
                                         tcp_socket.close();
+                                        debug!(">>>> Tcp connection [{tcp_connection_key}] closed because of destination relay finish, socket state: {}", tcp_socket.state());
                                         break;
                                     },
                                     Ok(TcpConnectionToTunCommand::DestinationData(data))=>data,
@@ -248,6 +256,7 @@ impl PpaassVpnServer {
                                     Err(TryRecvError::Disconnected) => {
                                         error!(">>>> Fail to send destination data from vpn tcp connection [{tcp_connection_key}] to tcp socket because of receiver disconnected.");
                                         tcp_socket.close();
+                                        debug!(">>>> Tcp connection [{tcp_connection_key}] closed because of destination relay finish, socket state:{}", tcp_socket.state());
                                         break;
                                     },
                                 };
@@ -323,11 +332,6 @@ impl PpaassVpnServer {
                     socket_handle_and_vpn_tcp_connection_mapping
                         .insert(socket_handle, tcp_connection_key);
                 };
-
-                debug!(
-                    ">>>> Tcp connection [{tcp_connection_key}] push tun data into vpn device:\n{}\n",
-                    print_packet(&ipv4_packet)
-                );
             }
             IpProtocol::Udp => {
                 let ipv4_packet_payload = ipv4_packet.payload();
