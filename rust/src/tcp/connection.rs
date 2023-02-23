@@ -7,6 +7,7 @@ use std::{
 use anyhow::anyhow;
 use anyhow::Result;
 
+use futures::Future;
 use log::{debug, error, info};
 
 use smoltcp::{
@@ -25,40 +26,32 @@ use super::TcpConnectionKey;
 
 #[derive(Debug)]
 pub(crate) enum TcpConnectionToTunCommand {
-    CloseSocket,
+    ConnectDestinationFail,
+    ReadDestinationComplete,
+    ReadDestinationFail,
+    ForwardTunDataToDestinationFail,
     DestinationData(Vec<u8>),
 }
 
 #[derive(Debug)]
 pub(crate) struct TcpConnection {
     connection_key: TcpConnectionKey,
-    socket_handle: SocketHandle,
 }
 
 impl TcpConnection {
-    pub fn new(
+    pub fn new<F, R>(
         connection_key: TcpConnectionKey,
-        sockets: &mut SocketSet<'static>,
         mut tun_read_receiver: Receiver<Vec<u8>>,
-    ) -> Result<(Self, Receiver<TcpConnectionToTunCommand>)> {
-        let listen_addr =
-            SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
-
-        let socket_handle = {
-            let mut socket = Socket::new(
-                SocketBuffer::new(vec![0; 655350]),
-                SocketBuffer::new(vec![0; 655350]),
-            );
-
-            socket
-                .listen::<SocketAddr>(listen_addr)
-                .map_err(|e| anyhow!(">>>> Tcp connection [{connection_key}] fail to listen vpn tcp socket because of error: {e:?}"))?;
-
-            sockets.add(socket)
-        };
-
+        connected_callback: F,
+    ) -> Result<(Self, Receiver<TcpConnectionToTunCommand>)>
+    where
+        F: FnOnce(bool) -> R,
+        F: Send + Sync + 'static,
+        R: Future<Output = ()> + Send + 'static,
+    {
         let (connection_to_tun_socket_command_sender, connection_to_tun_socket_command_receiver) =
             channel::<TcpConnectionToTunCommand>(1024);
+
         info!("Create vpn tcp connection [{connection_key}]");
         tokio::spawn(async move {
             debug!(">>>> Tcp connection [{connection_key}] going to connect to destination.");
@@ -85,8 +78,9 @@ impl TcpConnection {
                 Ok(Ok(dst_tcp_stream)) => dst_tcp_stream,
                 Ok(Err(e)) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of error: {e:?}");
+                    connected_callback(false).await;
                     if let Err(e) = connection_to_tun_socket_command_sender
-                        .send(TcpConnectionToTunCommand::CloseSocket)
+                        .send(TcpConnectionToTunCommand::ConnectDestinationFail)
                         .await
                     {
                         error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
@@ -95,8 +89,9 @@ impl TcpConnection {
                 }
                 Err(_) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of timeout");
+                    connected_callback(false).await;
                     if let Err(e) = connection_to_tun_socket_command_sender
-                        .send(TcpConnectionToTunCommand::CloseSocket)
+                        .send(TcpConnectionToTunCommand::ConnectDestinationFail)
                         .await
                     {
                         error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
@@ -115,7 +110,7 @@ impl TcpConnection {
                         let size = match dst_tcp_read.read(&mut dst_read_buf).await {
                             Ok(0) => {
                                 if let Err(e) = connection_to_tun_socket_command_sender
-                                    .send(TcpConnectionToTunCommand::CloseSocket)
+                                    .send(TcpConnectionToTunCommand::ReadDestinationComplete)
                                     .await
                                 {
                                     error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
@@ -126,7 +121,7 @@ impl TcpConnection {
                             Err(e) => {
                                 error!("<<<< Tcp connection [{connection_key}] fail to read destination data because of error: {e:?}");
                                 if let Err(e) = connection_to_tun_socket_command_sender
-                                    .send(TcpConnectionToTunCommand::CloseSocket)
+                                    .send(TcpConnectionToTunCommand::ReadDestinationFail)
                                     .await
                                 {
                                     error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
@@ -149,6 +144,7 @@ impl TcpConnection {
                     }
                 });
             }
+            connected_callback(true);
             // let tun_read_receiver = &mut tun_read_receiver;
             loop {
                 let tun_read_data = match tun_read_receiver.recv().await {
@@ -156,7 +152,7 @@ impl TcpConnection {
                     None => {
                         error!(">>>> Tcp connection [{connection_key}] closed from input side.");
                         if let Err(e) = connection_to_tun_socket_command_sender
-                            .send(TcpConnectionToTunCommand::CloseSocket)
+                            .send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail)
                             .await
                         {
                             error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
@@ -167,7 +163,7 @@ impl TcpConnection {
                 if let Err(e) = dst_tcp_write.write(&tun_read_data).await {
                     error!(">>>> Tcp connection [{connection_key}] fail to write tun date to destination because of error: {e:?}");
                     if let Err(e) = connection_to_tun_socket_command_sender
-                        .send(TcpConnectionToTunCommand::CloseSocket)
+                        .send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail)
                         .await
                     {
                         error!(
@@ -179,7 +175,7 @@ impl TcpConnection {
                 if let Err(e) = dst_tcp_write.flush().await {
                     error!(">>>> Tcp connection [{connection_key}] fail to flush tun date to destination because of error: {e:?}");
                     if let Err(e) = connection_to_tun_socket_command_sender
-                        .send(TcpConnectionToTunCommand::CloseSocket)
+                        .send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail)
                         .await
                     {
                         error!(
@@ -192,15 +188,8 @@ impl TcpConnection {
         });
 
         Ok((
-            Self {
-                connection_key,
-                socket_handle,
-            },
+            Self { connection_key },
             connection_to_tun_socket_command_receiver,
         ))
-    }
-
-    pub fn get_socket_handle(&self) -> SocketHandle {
-        self.socket_handle
     }
 }
