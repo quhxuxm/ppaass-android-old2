@@ -49,8 +49,7 @@ impl TcpConnection {
         F: Send + Sync + 'static,
         R: Future<Output = ()> + Send + 'static,
     {
-        let (connection_to_tun_socket_command_sender, connection_to_tun_socket_command_receiver) =
-            channel::<TcpConnectionToTunCommand>(1024);
+        let (connection_to_tun_socket_command_sender, connection_to_tun_socket_command_receiver) = channel::<TcpConnectionToTunCommand>(1024);
 
         info!("Create vpn tcp connection [{connection_key}]");
         tokio::spawn(async move {
@@ -67,22 +66,13 @@ impl TcpConnection {
                 error!(">>>> Tcp connection [{connection_key}] fail to protect tokio tcp socket because of error: {e:?}");
                 return;
             };
-            let dst_socket_addr =
-                SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
-            let dst_tcp_stream = match timeout(
-                Duration::from_secs(5),
-                dst_socket.connect(dst_socket_addr),
-            )
-            .await
-            {
+            let dst_socket_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
+            let dst_tcp_stream = match timeout(Duration::from_secs(5), dst_socket.connect(dst_socket_addr)).await {
                 Ok(Ok(dst_tcp_stream)) => dst_tcp_stream,
                 Ok(Err(e)) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of error: {e:?}");
                     connected_callback(false).await;
-                    if let Err(e) = connection_to_tun_socket_command_sender
-                        .send(TcpConnectionToTunCommand::ConnectDestinationFail)
-                        .await
-                    {
+                    if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ConnectDestinationFail).await {
                         error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
                     };
                     return;
@@ -90,10 +80,7 @@ impl TcpConnection {
                 Err(_) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of timeout");
                     connected_callback(false).await;
-                    if let Err(e) = connection_to_tun_socket_command_sender
-                        .send(TcpConnectionToTunCommand::ConnectDestinationFail)
-                        .await
-                    {
+                    if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ConnectDestinationFail).await {
                         error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
                     };
                     return;
@@ -101,18 +88,14 @@ impl TcpConnection {
             };
             let (mut dst_tcp_read, mut dst_tcp_write) = dst_tcp_stream.into_split();
             {
-                let connection_to_tun_socket_command_sender =
-                    connection_to_tun_socket_command_sender.clone();
+                let connection_to_tun_socket_command_sender = connection_to_tun_socket_command_sender.clone();
                 tokio::spawn(async move {
                     debug!("<<<< Tcp connection [{connection_key}] start destination relay task.");
                     loop {
                         let mut dst_read_buf = [0u8; 65535];
                         let size = match dst_tcp_read.read(&mut dst_read_buf).await {
                             Ok(0) => {
-                                if let Err(e) = connection_to_tun_socket_command_sender
-                                    .send(TcpConnectionToTunCommand::ReadDestinationComplete)
-                                    .await
-                                {
+                                if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ReadDestinationComplete).await {
                                     error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
                                 };
                                 break;
@@ -120,25 +103,15 @@ impl TcpConnection {
                             Ok(size) => size,
                             Err(e) => {
                                 error!("<<<< Tcp connection [{connection_key}] fail to read destination data because of error: {e:?}");
-                                if let Err(e) = connection_to_tun_socket_command_sender
-                                    .send(TcpConnectionToTunCommand::ReadDestinationFail)
-                                    .await
-                                {
+                                if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ReadDestinationFail).await {
                                     error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
                                 };
                                 break;
                             }
                         };
                         let dst_read_buf = &dst_read_buf[..size];
-                        if let Err(e) = connection_to_tun_socket_command_sender
-                            .send(TcpConnectionToTunCommand::DestinationData(
-                                dst_read_buf.to_vec(),
-                            ))
-                            .await
-                        {
-                            error!(
-                            "<<<< Fail to send destination data to socket because of error: {e:?}"
-                        );
+                        if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::DestinationData(dst_read_buf.to_vec())).await {
+                            error!("<<<< Fail to send destination data to socket because of error: {e:?}");
                             break;
                         };
                     }
@@ -151,10 +124,7 @@ impl TcpConnection {
                     Some(tun_read_data) => tun_read_data,
                     None => {
                         error!(">>>> Tcp connection [{connection_key}] closed from input side.");
-                        if let Err(e) = connection_to_tun_socket_command_sender
-                            .send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail)
-                            .await
-                        {
+                        if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail).await {
                             error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
                         };
                         break;
@@ -162,34 +132,21 @@ impl TcpConnection {
                 };
                 if let Err(e) = dst_tcp_write.write(&tun_read_data).await {
                     error!(">>>> Tcp connection [{connection_key}] fail to write tun date to destination because of error: {e:?}");
-                    if let Err(e) = connection_to_tun_socket_command_sender
-                        .send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail)
-                        .await
-                    {
-                        error!(
-                            "<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}"
-                        );
+                    if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail).await {
+                        error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
                     };
                     continue;
                 };
                 if let Err(e) = dst_tcp_write.flush().await {
                     error!(">>>> Tcp connection [{connection_key}] fail to flush tun date to destination because of error: {e:?}");
-                    if let Err(e) = connection_to_tun_socket_command_sender
-                        .send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail)
-                        .await
-                    {
-                        error!(
-                            "<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}"
-                        );
+                    if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail).await {
+                        error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
                     };
                     continue;
                 };
             }
         });
 
-        Ok((
-            Self { connection_key },
-            connection_to_tun_socket_command_receiver,
-        ))
+        Ok((Self { connection_key }, connection_to_tun_socket_command_receiver))
     }
 }
