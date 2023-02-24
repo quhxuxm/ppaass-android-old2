@@ -16,12 +16,7 @@ pub(crate) struct TcpConnectionKey {
 }
 
 impl TcpConnectionKey {
-    pub(crate) fn new(
-        src_addr: Ipv4Addr,
-        src_port: u16,
-        dst_addr: Ipv4Addr,
-        dst_port: u16,
-    ) -> Self {
+    pub(crate) fn new(src_addr: Ipv4Addr, src_port: u16, dst_addr: Ipv4Addr, dst_port: u16) -> Self {
         Self {
             src_addr,
             dst_addr,
@@ -33,11 +28,7 @@ impl TcpConnectionKey {
 
 impl Debug for TcpConnectionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[{}:{}->{}:{}]",
-            self.src_addr, self.src_port, self.dst_addr, self.dst_port
-        )
+        write!(f, "[{}:{}->{}:{}]", self.src_addr, self.src_port, self.dst_addr, self.dst_port)
     }
 }
 
