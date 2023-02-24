@@ -50,7 +50,7 @@ impl RxToken for PpaassVpnRxToken {
 
 pub(crate) struct PpaassVpnTxToken<'a> {
     id: String,
-    tx_sender: &'a Sender<Vec<u8>>,
+    tx_queue: &'a mut VecDeque<Vec<u8>>,
 }
 
 impl<'a> Debug for PpaassVpnTxToken<'a> {
@@ -60,9 +60,9 @@ impl<'a> Debug for PpaassVpnTxToken<'a> {
 }
 
 impl<'a> PpaassVpnTxToken<'a> {
-    fn new(tx_sender: &'a Sender<Vec<u8>>) -> Self {
+    fn new(tx_queue: &'a mut VecDeque<Vec<u8>>) -> Self {
         let id = format!("T-{}", Uuid::new_v4().to_string().replace('-', ""));
-        Self { id, tx_sender }
+        Self { id, tx_queue }
     }
 }
 
@@ -74,30 +74,29 @@ impl<'a> TxToken for PpaassVpnTxToken<'a> {
         let mut raw_data = vec![0; len];
         let result = f(&mut raw_data);
         trace!("<<<< Ppaass vpn TX token [{}] transmit data:\n{}", self.id, print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&raw_data));
-        let tx_sender = self.tx_sender.clone();
-        tokio::spawn(async move {
-            if let Err(e) = tx_sender.send(raw_data).await {
-                error!("<<<< Fail to send device data to tx sender because of error: {e:?}");
-            };
-        });
-
+        self.tx_queue.push_back(raw_data);
         result
     }
 }
 
 pub(crate) struct PpaassVpnDevice {
     rx_queue: VecDeque<Vec<u8>>,
-    tx_sender: Sender<Vec<u8>>,
+    tx_queue: VecDeque<Vec<u8>>,
 }
 
 impl PpaassVpnDevice {
-    pub fn new(tx_sender: Sender<Vec<u8>>) -> Self {
+    pub fn new() -> Self {
         let rx_queue = VecDeque::new();
-        Self { rx_queue, tx_sender }
+        let tx_queue = VecDeque::new();
+        Self { rx_queue, tx_queue }
     }
 
     pub(crate) fn push_rx(&mut self, raw_packet: Vec<u8>) {
         self.rx_queue.push_back(raw_packet)
+    }
+
+    pub(crate) fn pop_tx(&mut self) -> Option<Vec<u8>> {
+        self.tx_queue.pop_front()
     }
 }
 
@@ -116,10 +115,10 @@ impl Device for PpaassVpnDevice {
 
     fn receive(&mut self, timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         match self.rx_queue.pop_front() {
-            | None => None,
-            | Some(raw_data) => {
+            None => None,
+            Some(raw_data) => {
                 let rx_token = PpaassVpnRxToken::new(raw_data);
-                let tx_token = PpaassVpnTxToken::new(&self.tx_sender);
+                let tx_token = PpaassVpnTxToken::new(&mut self.tx_queue);
                 trace!(">>>> Ppaass vpn device create RX token: [{rx_token:?}] and TX token: [{tx_token:?}]",);
                 Some((rx_token, tx_token))
             },
@@ -127,7 +126,7 @@ impl Device for PpaassVpnDevice {
     }
 
     fn transmit(&mut self, timestamp: Instant) -> Option<Self::TxToken<'_>> {
-        let tx_token = PpaassVpnTxToken::new(&self.tx_sender);
+        let tx_token = PpaassVpnTxToken::new(&mut self.tx_queue);
         trace!("<<<< Ppaass vpn device create TX token: {tx_token:?}",);
         Some(tx_token)
     }

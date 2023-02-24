@@ -1,6 +1,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     os::fd::AsRawFd,
+    task::{RawWaker, RawWakerVTable, Waker},
     time::Duration,
 };
 
@@ -12,7 +13,7 @@ use log::{debug, error, info};
 
 use smoltcp::{
     iface::{SocketHandle, SocketSet},
-    socket::tcp::{Socket, SocketBuffer},
+    socket::tcp::{Socket as SmolTcpSocket, SocketBuffer},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -36,117 +37,52 @@ pub(crate) enum TcpConnectionToTunCommand {
 #[derive(Debug)]
 pub(crate) struct TcpConnection {
     connection_key: TcpConnectionKey,
+    receive_waker: Waker,
+    receive_waker_vtable: RawWakerVTable,
+    send_waker: Waker,
 }
 
 impl TcpConnection {
-    pub fn new<F, R>(
-        connection_key: TcpConnectionKey,
-        mut tun_read_receiver: Receiver<Vec<u8>>,
-        connected_callback: F,
-    ) -> Result<(Self, Receiver<TcpConnectionToTunCommand>)>
-    where
-        F: FnOnce(bool) -> R,
-        F: Send + Sync + 'static,
-        R: Future<Output = ()> + Send + 'static,
-    {
-        let (connection_to_tun_socket_command_sender, connection_to_tun_socket_command_receiver) = channel::<TcpConnectionToTunCommand>(1024);
+    pub fn new(connection_key: TcpConnectionKey) -> Result<Self> {
+        let listen_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
+        let mut socket = SmolTcpSocket::new(SocketBuffer::new(vec![0; 655350]), SocketBuffer::new(vec![0; 655350]));
+        let (receive_waker, receive_waker_vtable) = Self::create_receive_waker(&socket);
+        socket.register_recv_waker(&receive_waker);
+        let send_waker = Self::create_send_waker(&socket);
+        socket.register_send_waker(&send_waker);
+        match socket.listen::<SocketAddr>(listen_addr) {
+            Ok(()) => Ok(Self {
+                connection_key,
+                receive_waker,
+                receive_waker_vtable,
+                send_waker,
+            }),
+            Err(e) => {
+                error!(">>>> Tcp connection [{connection_key}] fail to listen vpn tcp socket because of error: {e:?}");
+                Err(anyhow!(">>>> Tcp connection [{connection_key}] fail to listen vpn tcp socket because of error: {e:?}"))
+            },
+        }
+    }
 
-        info!("Create vpn tcp connection [{connection_key}]");
-        tokio::spawn(async move {
-            debug!(">>>> Tcp connection [{connection_key}] going to connect to destination.");
-            let dst_socket = match tokio::net::TcpSocket::new_v4() {
-                | Ok(dst_socket) => dst_socket,
-                | Err(e) => {
-                    error!(">>>> Tcp connection [{connection_key}] fail to generate tokio tcp socket because of error: {e:?}");
-                    return;
-                },
-            };
-            let dst_socket_raw_fd = dst_socket.as_raw_fd();
-            if let Err(e) = protect_socket(dst_socket_raw_fd) {
-                error!(">>>> Tcp connection [{connection_key}] fail to protect tokio tcp socket because of error: {e:?}");
-                return;
-            };
-            let dst_socket_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
-            let dst_tcp_stream = match timeout(Duration::from_secs(5), dst_socket.connect(dst_socket_addr)).await {
-                | Ok(Ok(dst_tcp_stream)) => dst_tcp_stream,
-                | Ok(Err(e)) => {
-                    error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of error: {e:?}");
-                    connected_callback(false).await;
-                    if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ConnectDestinationFail).await {
-                        error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
-                    };
-                    return;
-                },
-                | Err(_) => {
-                    error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of timeout");
-                    connected_callback(false).await;
-                    if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ConnectDestinationFail).await {
-                        error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
-                    };
-                    return;
-                },
-            };
-            let (mut dst_tcp_read, mut dst_tcp_write) = dst_tcp_stream.into_split();
-            {
-                let connection_to_tun_socket_command_sender = connection_to_tun_socket_command_sender.clone();
-                tokio::spawn(async move {
-                    debug!("<<<< Tcp connection [{connection_key}] start destination relay task.");
-                    loop {
-                        let mut dst_read_buf = [0u8; 65535];
-                        let size = match dst_tcp_read.read(&mut dst_read_buf).await {
-                            | Ok(0) => {
-                                if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ReadDestinationComplete).await {
-                                    error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
-                                };
-                                break;
-                            },
-                            | Ok(size) => size,
-                            | Err(e) => {
-                                error!("<<<< Tcp connection [{connection_key}] fail to read destination data because of error: {e:?}");
-                                if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ReadDestinationFail).await {
-                                    error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
-                                };
-                                break;
-                            },
-                        };
-                        let dst_read_buf = &dst_read_buf[..size];
-                        if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::DestinationData(dst_read_buf.to_vec())).await {
-                            error!("<<<< Fail to send destination data to socket because of error: {e:?}");
-                            break;
-                        };
-                    }
-                });
-            }
-            connected_callback(true);
-            // let tun_read_receiver = &mut tun_read_receiver;
-            loop {
-                let tun_read_data = match tun_read_receiver.recv().await {
-                    | Some(tun_read_data) => tun_read_data,
-                    | None => {
-                        error!(">>>> Tcp connection [{connection_key}] closed from input side.");
-                        if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail).await {
-                            error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
-                        };
-                        break;
-                    },
-                };
-                if let Err(e) = dst_tcp_write.write(&tun_read_data).await {
-                    error!(">>>> Tcp connection [{connection_key}] fail to write tun date to destination because of error: {e:?}");
-                    if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail).await {
-                        error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
-                    };
-                    continue;
-                };
-                if let Err(e) = dst_tcp_write.flush().await {
-                    error!(">>>> Tcp connection [{connection_key}] fail to flush tun date to destination because of error: {e:?}");
-                    if let Err(e) = connection_to_tun_socket_command_sender.send(TcpConnectionToTunCommand::ForwardTunDataToDestinationFail).await {
-                        error!("<<<< Tcp connection [{connection_key}] fail to send close socket command to tun because of error: {e:?}");
-                    };
-                    continue;
-                };
-            }
-        });
+    fn recive_raw_waker_clone(data: *const ()) -> RawWaker {
+        todo!()
+    }
 
-        Ok((Self { connection_key }, connection_to_tun_socket_command_receiver))
+    fn recive_raw_waker_wake(data: *const ()) {
+        todo!()
+    }
+
+    fn recive_raw_waker_wake_by_ref(data: *const ()) {
+        todo!()
+    }
+
+    fn create_receive_waker(socket: *const SmolTcpSocket) -> (Waker, RawWakerVTable) {
+        let vtble = RawWakerVTable::new(Self::recive_raw_waker_clone, Self::recive_raw_waker_wake, Self::recive_raw_waker_wake_by_ref, drop);
+        let raw_waker = RawWaker::new(socket as *const (), &vtble);
+        (unsafe { Waker::from_raw(raw_waker) }, vtble)
+    }
+
+    fn create_send_waker(socket: *const SmolTcpSocket) -> Waker {
+        todo!()
     }
 }
