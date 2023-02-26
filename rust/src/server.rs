@@ -209,7 +209,7 @@ impl PpaassVpnServer {
                     TcpConnectionKey::new(ipv4_packet.src_addr().into(), tcp_packet.src_port(), ipv4_packet.dst_addr().into(), tcp_packet.dst_port());
 
                 match tcp_connections.entry(tcp_connection_key) {
-                    Entry::Occupied(enrty) => enrty.s,
+                    Entry::Occupied(enrty) => {},
                     Entry::Vacant(entry) => {
                         debug!("Create a new tcp connection: {tcp_connection_key}");
                         let (tun_input_sender, tun_input_receiver) = channel(1024);
