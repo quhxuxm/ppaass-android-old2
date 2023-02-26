@@ -1,5 +1,8 @@
 use std::{
-    collections::{hash_map::Entry::Vacant, HashMap},
+    collections::{
+        hash_map::Entry::{self, Vacant},
+        HashMap,
+    },
     fmt::Debug,
     fs::File,
     io::{ErrorKind, Read, Write},
@@ -38,12 +41,13 @@ use uuid::Uuid;
 
 use crate::{
     device::PpaassVpnDevice,
-    tcp::{TcpConnection, TcpConnectionKey, TcpConnectionToTunCommand},
+    tcp::{TcpConnection, TcpConnectionKey},
     util::{print_packet, print_packet_bytes},
 };
 
 struct TcpConnectionWrapper {
     tcp_connection: TcpConnection,
+    tun_input_sender: Sender<Vec<u8>>,
 }
 
 pub(crate) struct PpaassVpnServer
@@ -70,7 +74,7 @@ impl PpaassVpnServer {
         Ok(Self { id, tun_fd })
     }
 
-    fn init() -> (TokioRuntime, Arc<TokioMutex<Interface>>, Arc<TokioMutex<PpaassVpnDevice>>, Arc<TokioMutex<SocketSet<'static>>>) {
+    fn init() -> (TokioRuntime, Arc<TokioMutex<Interface>>, Arc<TokioMutex<PpaassVpnDevice>>) {
         let mut device = PpaassVpnDevice::new();
         let mut ifrace_config = Config::default();
         ifrace_config.random_seed = rand::random::<u64>();
@@ -84,8 +88,8 @@ impl PpaassVpnServer {
         runtime_builder.worker_threads(32).enable_all().thread_name("PPAASS-RUST-THREAD");
         // .unhandled_panic(UnhandledPanic::ShutdownRuntime);
         let tokio_rutime = runtime_builder.build().expect("Fail to start vpn runtime.");
-        let sockets = SocketSet::new(vec![]);
-        (tokio_rutime, Arc::new(TokioMutex::new(iface)), Arc::new(TokioMutex::new(device)), Arc::new(TokioMutex::new(sockets)))
+
+        (tokio_rutime, Arc::new(TokioMutex::new(iface)), Arc::new(TokioMutex::new(device)))
     }
 
     fn split_tun(tun_fd: i32) -> (Arc<TokioMutex<File>>, Arc<TokioMutex<File>>) {
@@ -101,7 +105,7 @@ impl PpaassVpnServer {
         let (tun_read, tun_write) = Self::split_tun(tun_fd);
         info!("Ready to prepare tun read & write");
 
-        let (tokio_runtime, iface, device, sockets) = Self::init();
+        let (tokio_runtime, iface, device) = Self::init();
         let tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionKey, TcpConnectionWrapper>>> = Default::default();
         let socket_handles_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionKey>>> = Default::default();
         let tx_guard = {
@@ -160,9 +164,7 @@ impl PpaassVpnServer {
                         tun_read_buf[..size].to_vec()
                     };
                     let mut tcp_connections = tcp_connections.lock().await;
-                    let mut socket_handles_mapping = socket_handles_mapping.lock().await;
-                    let mut sockets = sockets.lock().await;
-                    Self::check_and_prepare_tcp_connection(&tun_data, &mut tcp_connections, &mut socket_handles_mapping, &mut sockets)?;
+                    Self::handle_tun_input(&tun_data, iface.clone(), device.clone(), &mut tcp_connections).await?;
                     let mut device = device.lock().await;
                     device.push_rx(tun_data);
                 }
@@ -173,11 +175,11 @@ impl PpaassVpnServer {
         Ok(())
     }
 
-    fn check_and_prepare_tcp_connection(
+    async fn handle_tun_input(
         tun_data: &[u8],
+        iface: Arc<TokioMutex<Interface>>,
+        device: Arc<TokioMutex<PpaassVpnDevice>>,
         tcp_connections: &mut HashMap<TcpConnectionKey, TcpConnectionWrapper>,
-        socket_handles_mapping: &mut HashMap<SocketHandle, TcpConnectionKey>,
-        sockets: &mut SocketSet<'static>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(tun_data).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
@@ -206,9 +208,18 @@ impl PpaassVpnServer {
                 let tcp_connection_key =
                     TcpConnectionKey::new(ipv4_packet.src_addr().into(), tcp_packet.src_port(), ipv4_packet.dst_addr().into(), tcp_packet.dst_port());
 
-                if let Vacant(entry) = tcp_connections.entry(tcp_connection_key) {
-                    let tcp_connection = TcpConnection::new(tcp_connection_key)?;
-                    entry.insert(TcpConnectionWrapper { tcp_connection });
+                match tcp_connections.entry(tcp_connection_key) {
+                    Entry::Occupied(enrty) => enrty.s,
+                    Entry::Vacant(entry) => {
+                        debug!("Create a new tcp connection: {tcp_connection_key}");
+                        let (tun_input_sender, tun_input_receiver) = channel(1024);
+                        let tcp_connection = TcpConnection::new(tcp_connection_key, iface, device, tun_input_receiver).await?;
+                        let entry = entry.insert(TcpConnectionWrapper {
+                            tcp_connection,
+                            tun_input_sender,
+                        });
+                        entry.tcp_connection.start().await;
+                    },
                 };
             },
             IpProtocol::Udp => {

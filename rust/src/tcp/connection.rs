@@ -1,6 +1,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     os::fd::AsRawFd,
+    sync::Arc,
     task::{RawWaker, RawWakerVTable, Waker},
     time::Duration,
 };
@@ -12,77 +13,83 @@ use futures::Future;
 use log::{debug, error, info};
 
 use smoltcp::{
-    iface::{SocketHandle, SocketSet},
+    iface::{Interface, SocketHandle, SocketSet},
     socket::tcp::{Socket as SmolTcpSocket, SocketBuffer},
+    time::Instant,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::mpsc::{channel, Receiver},
+    sync::{
+        mpsc::{channel, Receiver},
+        Mutex,
+    },
     time::timeout,
 };
 
-use crate::protect_socket;
+use crate::{device::PpaassVpnDevice, protect_socket};
 
 use super::TcpConnectionKey;
 
-#[derive(Debug)]
-pub(crate) enum TcpConnectionToTunCommand {
-    ConnectDestinationFail,
-    ReadDestinationComplete,
-    ReadDestinationFail,
-    ForwardTunDataToDestinationFail,
-    DestinationData(Vec<u8>),
-}
-
-#[derive(Debug)]
 pub(crate) struct TcpConnection {
     connection_key: TcpConnectionKey,
-    receive_waker: Waker,
-    receive_waker_vtable: RawWakerVTable,
-    send_waker: Waker,
+    tub_input_receiver: Arc<Mutex<Receiver<Vec<u8>>>>,
+    iface: Arc<Mutex<Interface>>,
+    device: Arc<Mutex<PpaassVpnDevice>>,
+    socket_set: Arc<Mutex<SocketSet<'static>>>,
+    socket_handle: SocketHandle,
 }
 
 impl TcpConnection {
-    pub fn new(connection_key: TcpConnectionKey) -> Result<Self> {
+    pub async fn new(
+        connection_key: TcpConnectionKey,
+        iface: Arc<Mutex<Interface>>,
+        device: Arc<Mutex<PpaassVpnDevice>>,
+        tub_input_receiver: Receiver<Vec<u8>>,
+    ) -> Result<Self> {
         let listen_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
         let mut socket = SmolTcpSocket::new(SocketBuffer::new(vec![0; 655350]), SocketBuffer::new(vec![0; 655350]));
-        let (receive_waker, receive_waker_vtable) = Self::create_receive_waker(&socket);
-        socket.register_recv_waker(&receive_waker);
-        let send_waker = Self::create_send_waker(&socket);
-        socket.register_send_waker(&send_waker);
-        match socket.listen::<SocketAddr>(listen_addr) {
-            Ok(()) => Ok(Self {
-                connection_key,
-                receive_waker,
-                receive_waker_vtable,
-                send_waker,
-            }),
-            Err(e) => {
-                error!(">>>> Tcp connection [{connection_key}] fail to listen vpn tcp socket because of error: {e:?}");
-                Err(anyhow!(">>>> Tcp connection [{connection_key}] fail to listen vpn tcp socket because of error: {e:?}"))
-            },
+        if let Err(e) = socket.listen::<SocketAddr>(listen_addr) {
+            error!(">>>> Tcp connection [{connection_key}] fail to listen vpn tcp socket because of error: {e:?}");
+            return Err(anyhow!(">>>> Tcp connection [{connection_key}] fail to listen vpn tcp socket because of error: {e:?}"));
         }
+        let mut socket_set = SocketSet::new(vec![]);
+        let socket_handle = socket_set.add(socket);
+
+        Ok(Self {
+            connection_key,
+            tub_input_receiver: Arc::new(Mutex::new(tub_input_receiver)),
+            socket_set: Arc::new(Mutex::new(socket_set)),
+            socket_handle,
+            iface,
+            device,
+        })
     }
 
-    fn recive_raw_waker_clone(data: *const ()) -> RawWaker {
-        todo!()
-    }
-
-    fn recive_raw_waker_wake(data: *const ()) {
-        todo!()
-    }
-
-    fn recive_raw_waker_wake_by_ref(data: *const ()) {
-        todo!()
-    }
-
-    fn create_receive_waker(socket: *const SmolTcpSocket) -> (Waker, RawWakerVTable) {
-        let vtble = RawWakerVTable::new(Self::recive_raw_waker_clone, Self::recive_raw_waker_wake, Self::recive_raw_waker_wake_by_ref, drop);
-        let raw_waker = RawWaker::new(socket as *const (), &vtble);
-        (unsafe { Waker::from_raw(raw_waker) }, vtble)
-    }
-
-    fn create_send_waker(socket: *const SmolTcpSocket) -> Waker {
-        todo!()
+    pub async fn start(&self) {
+        let iface = self.iface.clone();
+        let device = self.device.clone();
+        let socket_set = self.socket_set.clone();
+        {
+            let mut iface = iface.lock().await;
+            let mut device = device.lock().await;
+            let mut socket_set = socket_set.lock().await;
+            iface.poll(Instant::now(), &mut *device, &mut socket_set);
+        }
+        let tub_input_receiver = self.tub_input_receiver.clone();
+        let connection_key = self.connection_key;
+        tokio::spawn(async move {
+            loop {
+                let mut tub_input_receiver = tub_input_receiver.lock().await;
+                let tun_input = tub_input_receiver.recv().await;
+                let tun_input = match tun_input {
+                    None => {
+                        break;
+                    },
+                    Some(tun_input) => tun_input,
+                };
+                drop(tub_input_receiver);
+                debug!(">>>> Tcp connection [{connection_key}] receive tun data:\n{}\n", pretty_hex::pretty_hex(&tun_input))
+            }
+        });
     }
 }
