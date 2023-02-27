@@ -27,6 +27,8 @@ use smoltcp::{
     wire::{Icmpv4Packet, IpAddress, IpCidr, IpProtocol, IpVersion, Ipv4Address, Ipv4Packet, TcpPacket, UdpPacket},
 };
 
+use smoltcp::socket::tcp::Socket as SmoltcpTcpSocket;
+
 use tokio::{
     runtime::Builder as TokioRuntimeBuilder,
     sync::{
@@ -74,7 +76,7 @@ impl PpaassVpnServer {
         Ok(Self { id, tun_fd })
     }
 
-    fn init() -> (TokioRuntime, Arc<TokioMutex<Interface>>, Arc<TokioMutex<PpaassVpnDevice>>) {
+    fn init() -> (TokioRuntime, Arc<TokioMutex<Interface>>, Arc<TokioMutex<PpaassVpnDevice>>, Arc<TokioMutex<SocketSet<'static>>>) {
         let mut device = PpaassVpnDevice::new();
         let mut ifrace_config = Config::default();
         ifrace_config.random_seed = rand::random::<u64>();
@@ -89,7 +91,12 @@ impl PpaassVpnServer {
         // .unhandled_panic(UnhandledPanic::ShutdownRuntime);
         let tokio_rutime = runtime_builder.build().expect("Fail to start vpn runtime.");
 
-        (tokio_rutime, Arc::new(TokioMutex::new(iface)), Arc::new(TokioMutex::new(device)))
+        (
+            tokio_rutime,
+            Arc::new(TokioMutex::new(iface)),
+            Arc::new(TokioMutex::new(device)),
+            Arc::new(TokioMutex::new(SocketSet::new(vec![]))),
+        )
     }
 
     fn split_tun(tun_fd: i32) -> (Arc<TokioMutex<File>>, Arc<TokioMutex<File>>) {
@@ -105,9 +112,10 @@ impl PpaassVpnServer {
         let (tun_read, tun_write) = Self::split_tun(tun_fd);
         info!("Ready to prepare tun read & write");
 
-        let (tokio_runtime, iface, device) = Self::init();
+        let (tokio_runtime, iface, device, sockets) = Self::init();
         let tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionKey, TcpConnectionWrapper>>> = Default::default();
-        let socket_handles_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionKey>>> = Default::default();
+        let socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionKey>>> = Default::default();
+
         let tx_guard = {
             let server_id = server_id.clone();
             let device = device.clone();
@@ -163,10 +171,31 @@ impl PpaassVpnServer {
                         };
                         tun_read_buf[..size].to_vec()
                     };
-                    let mut tcp_connections = tcp_connections.lock().await;
-                    Self::handle_tun_input(&tun_data, iface.clone(), device.clone(), &mut tcp_connections).await?;
+                    Self::pre_poll_handle_tun_input(
+                        &tun_data,
+                        iface.clone(),
+                        device.clone(),
+                        sockets.clone(),
+                        tcp_connections.clone(),
+                        socket_handle_mapping.clone(),
+                    )
+                    .await?;
                     let mut device = device.lock().await;
                     device.push_rx(tun_data);
+                    let mut iface = iface.lock().await;
+                    let mut sockets = sockets.lock().await;
+                    if iface.poll(SmoltcpInstant::now(), &mut *device, &mut sockets) {
+                        'out: for (handle, socket) in sockets.iter_mut() {
+                            match socket {
+                                Socket::Raw(_) => todo!(),
+                                Socket::Icmp(_) => todo!(),
+                                Socket::Udp(_) => todo!(),
+                                Socket::Tcp(tcp_socket) => {},
+                                Socket::Dhcpv4(_) => todo!(),
+                                Socket::Dns(_) => todo!(),
+                            }
+                        }
+                    };
                 }
                 Ok(())
             })
@@ -175,11 +204,13 @@ impl PpaassVpnServer {
         Ok(())
     }
 
-    async fn handle_tun_input(
+    async fn pre_poll_handle_tun_input(
         tun_data: &[u8],
         iface: Arc<TokioMutex<Interface>>,
         device: Arc<TokioMutex<PpaassVpnDevice>>,
-        tcp_connections: &mut HashMap<TcpConnectionKey, TcpConnectionWrapper>,
+        sockets: Arc<TokioMutex<SocketSet<'static>>>,
+        tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionKey, TcpConnectionWrapper>>>,
+        socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionKey>>>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(tun_data).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
@@ -208,19 +239,22 @@ impl PpaassVpnServer {
                 let tcp_connection_key =
                     TcpConnectionKey::new(ipv4_packet.src_addr().into(), tcp_packet.src_port(), ipv4_packet.dst_addr().into(), tcp_packet.dst_port());
 
-                match tcp_connections.entry(tcp_connection_key) {
-                    Entry::Occupied(enrty) => {},
-                    Entry::Vacant(entry) => {
+                {
+                    let mut tcp_connections = tcp_connections.lock().await;
+                    if let Entry::Vacant(entry) = tcp_connections.entry(tcp_connection_key) {
                         debug!("Create a new tcp connection: {tcp_connection_key}");
                         let (tun_input_sender, tun_input_receiver) = channel(1024);
-                        let tcp_connection = TcpConnection::new(tcp_connection_key, iface, device, tun_input_receiver).await?;
+                        let tcp_connection = TcpConnection::new(tcp_connection_key, iface, device, sockets, tun_input_receiver).await?;
+                        let mut socket_handle_mapping = socket_handle_mapping.lock().await;
+                        socket_handle_mapping.insert(tcp_connection.get_socket_handle(), tcp_connection_key);
+
                         let entry = entry.insert(TcpConnectionWrapper {
                             tcp_connection,
                             tun_input_sender,
                         });
                         entry.tcp_connection.start().await;
-                    },
-                };
+                    };
+                }
             },
             IpProtocol::Udp => {
                 let ipv4_packet_payload = ipv4_packet.payload();
@@ -243,6 +277,58 @@ impl PpaassVpnServer {
             },
         };
 
+        Ok(())
+    }
+
+    async fn post_poll_handle_tcp_socket(
+        tun_data: &[u8],
+        iface: Arc<TokioMutex<Interface>>,
+        device: Arc<TokioMutex<PpaassVpnDevice>>,
+        sockets: Arc<TokioMutex<SocketSet<'static>>>,
+        tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionKey, TcpConnectionWrapper>>>,
+        socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionKey>>>,
+        tcp_socket: SmoltcpTcpSocket<'static>,
+        handle: SocketHandle,
+    ) -> Result<()> {
+        let tcp_connection_key = {
+            let socket_handle_mapping = socket_handle_mapping.lock().await;
+            let tcp_connection_key = socket_handle_mapping.get(&handle);
+            let Some(tcp_connection_key) = tcp_connection_key else {
+                error!(">>>> Can not find tcp connection socket mapping by handle: {handle} ");
+                return Ok(());
+            };
+            *tcp_connection_key
+        };
+        if !tcp_socket.is_active() {
+            let mut socket_handle_mapping = socket_handle_mapping.lock().await;
+            let tcp_connection_key = socket_handle_mapping.remove(&handle);
+            if let Some(tcp_connection_key) = tcp_connection_key {
+                let mut tcp_connections = tcp_connections.lock().await;
+                tcp_connections.remove(&tcp_connection_key);
+            }
+            return Ok(());
+        }
+        while tcp_socket.can_recv() {
+            let mut receive_data = [0u8; 65535];
+            let size = match tcp_socket.recv_slice(&mut receive_data) {
+                Ok(size) => size,
+                Err(e) => {
+                    error!(">>>> Tcp connection [{tcp_connection_key}] fail to receive tun input because of error: {e:?}");
+                    return Ok(());
+                },
+            };
+            let receive_data = &receive_data[0..size];
+            let tcp_connections = tcp_connections.lock().await;
+            let tcp_connection_wrapper = tcp_connections.get(&tcp_connection_key);
+            let Some(tcp_connection_wrapper) = tcp_connection_wrapper else {
+                                            error!(">>>> Tcp connection [{tcp_connection_key}] can not found form repository.");
+                                          return Ok(());
+                                        };
+            if let Err(e) = tcp_connection_wrapper.tun_input_sender.send(receive_data.to_vec()).await {
+                error!(">>>> Tcp connection [{tcp_connection_key}] fail to send tun input to tcp connection because of error: {e:?}");
+                return Ok(());
+            }
+        }
         Ok(())
     }
 }

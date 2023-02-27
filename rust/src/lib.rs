@@ -72,22 +72,22 @@ pub(crate) fn protect_socket(socket_fd: i32) -> Result<()> {
     let jni_env = java_vm.attach_current_thread_permanently().expect("Fail to attach jni env to current thread");
     let protect_result = jni_env.call_method(java_vpn_service_obj, "protect", "(I)Z", &[socket_fd_jni_arg]);
     let protect_result = match protect_result {
-        | Ok(protect_result) => protect_result,
-        | Err(e) => {
+        Ok(protect_result) => protect_result,
+        Err(e) => {
             error!("Fail to protect socket because of error: {e:?}");
             return Err(anyhow!("Fail to protect socket because of error: {e:?}"));
         },
     };
     match protect_result.z() {
-        | Ok(true) => {
+        Ok(true) => {
             debug!("Call java vpn service object protect socket java method success, socket raw fd: {socket_fd}");
             Ok(())
         },
-        | Ok(false) => {
+        Ok(false) => {
             error!("Fail to convert protect socket result because of return false");
             Err(anyhow!("Fail to protect socket because of result is false"))
         },
-        | Err(e) => {
+        Err(e) => {
             error!("Fail to convert protect socket result because of error: {e:?}");
             Err(anyhow!("Fail to convert protect socket result because of error: {e:?}"))
         },
