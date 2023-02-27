@@ -184,22 +184,32 @@ impl PpaassVpnServer {
                     device.push_rx(tun_data);
                     let mut iface = iface.lock().await;
                     let mut sockets = sockets.lock().await;
-                    if iface.poll(SmoltcpInstant::now(), &mut *device, &mut sockets) {
-                        'out: for (handle, socket) in sockets.iter_mut() {
-                            match socket {
-                                Socket::Raw(_) => todo!(),
-                                Socket::Icmp(_) => todo!(),
-                                Socket::Udp(_) => todo!(),
-                                Socket::Tcp(tcp_socket) => {},
-                                Socket::Dhcpv4(_) => todo!(),
-                                Socket::Dns(_) => todo!(),
-                            }
+                    let socket_update = iface.poll(SmoltcpInstant::now(), &mut *device, &mut sockets);
+                    if !socket_update {
+                        return Ok(());
+                    }
+                    for (handle, socket) in sockets.iter_mut() {
+                        match socket {
+                            Socket::Raw(_) => todo!(),
+                            Socket::Icmp(_) => todo!(),
+                            Socket::Udp(_) => todo!(),
+                            Socket::Tcp(tcp_socket) => {
+                                if let Err(e) =
+                                    Self::post_poll_handle_tcp_socket(tcp_connections.clone(), socket_handle_mapping.clone(), tcp_socket, handle).await
+                                {
+                                    error!(">>>> Fail to post poll handle [handle={handle}] tcp socket because of error: {e:?}");
+                                };
+                            },
+                            Socket::Dhcpv4(_) => todo!(),
+                            Socket::Dns(_) => todo!(),
                         }
-                    };
+                    }
                 }
                 Ok(())
             })
         };
+
+        let socket_guard = tokio::spawn(async move {});
 
         Ok(())
     }
@@ -281,21 +291,17 @@ impl PpaassVpnServer {
     }
 
     async fn post_poll_handle_tcp_socket(
-        tun_data: &[u8],
-        iface: Arc<TokioMutex<Interface>>,
-        device: Arc<TokioMutex<PpaassVpnDevice>>,
-        sockets: Arc<TokioMutex<SocketSet<'static>>>,
         tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionKey, TcpConnectionWrapper>>>,
         socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionKey>>>,
-        tcp_socket: SmoltcpTcpSocket<'static>,
+        tcp_socket: &mut SmoltcpTcpSocket<'static>,
         handle: SocketHandle,
     ) -> Result<()> {
         let tcp_connection_key = {
             let socket_handle_mapping = socket_handle_mapping.lock().await;
             let tcp_connection_key = socket_handle_mapping.get(&handle);
             let Some(tcp_connection_key) = tcp_connection_key else {
-                error!(">>>> Can not find tcp connection socket mapping by handle: {handle} ");
-                return Ok(());
+                error!(">>>> Can not find tcp connection socket mapping by handle: {handle}");
+                return Err(anyhow!("Can not find tcp connection socket mapping by handle: {handle}"));
             };
             *tcp_connection_key
         };
@@ -305,6 +311,7 @@ impl PpaassVpnServer {
             if let Some(tcp_connection_key) = tcp_connection_key {
                 let mut tcp_connections = tcp_connections.lock().await;
                 tcp_connections.remove(&tcp_connection_key);
+                debug!(">>>> Tcp connection [{tcp_connection_key}] is inactive, remove it.");
             }
             return Ok(());
         }
@@ -314,21 +321,22 @@ impl PpaassVpnServer {
                 Ok(size) => size,
                 Err(e) => {
                     error!(">>>> Tcp connection [{tcp_connection_key}] fail to receive tun input because of error: {e:?}");
-                    return Ok(());
+                    return Err(anyhow!("Tcp connection [{tcp_connection_key}] fail to receive tun input because of error: {e:?}"));
                 },
             };
             let receive_data = &receive_data[0..size];
             let tcp_connections = tcp_connections.lock().await;
             let tcp_connection_wrapper = tcp_connections.get(&tcp_connection_key);
             let Some(tcp_connection_wrapper) = tcp_connection_wrapper else {
-                                            error!(">>>> Tcp connection [{tcp_connection_key}] can not found form repository.");
-                                          return Ok(());
-                                        };
+                error!(">>>> Tcp connection [{tcp_connection_key}] can not found form repository.");
+               return Err(anyhow!("Tcp connection [{tcp_connection_key}] can not found form repository."));
+            };
             if let Err(e) = tcp_connection_wrapper.tun_input_sender.send(receive_data.to_vec()).await {
                 error!(">>>> Tcp connection [{tcp_connection_key}] fail to send tun input to tcp connection because of error: {e:?}");
-                return Ok(());
+                return Err(anyhow!("Tcp connection [{tcp_connection_key}] fail to send tun input to tcp connection because of error: {e:?}"));
             }
         }
+        while tcp_socket.can_send() {}
         Ok(())
     }
 }
