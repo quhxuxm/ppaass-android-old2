@@ -62,7 +62,10 @@ where
 
 impl Debug for PpaassVpnServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PpaassVpnServer").field("id", &self.id).field("tun_fd", &self.tun_fd).finish()
+        f.debug_struct("PpaassVpnServer")
+            .field("id", &self.id)
+            .field("tun_fd", &self.tun_fd)
+            .finish()
     }
 }
 
@@ -76,18 +79,31 @@ impl PpaassVpnServer {
         Ok(Self { id, tun_fd })
     }
 
-    fn init() -> (TokioRuntime, Arc<TokioMutex<Interface>>, Arc<TokioMutex<PpaassVpnDevice>>, Arc<TokioMutex<SocketSet<'static>>>) {
+    fn init() -> (
+        TokioRuntime,
+        Arc<TokioMutex<Interface>>,
+        Arc<TokioMutex<PpaassVpnDevice>>,
+        Arc<TokioMutex<SocketSet<'static>>>,
+    ) {
         let mut device = PpaassVpnDevice::new();
         let mut ifrace_config = Config::default();
         ifrace_config.random_seed = rand::random::<u64>();
         let mut iface = Interface::new(ifrace_config, &mut device);
         iface.set_any_ip(true);
         iface.update_ip_addrs(|ip_addrs| {
-            ip_addrs.push(IpCidr::new(IpAddress::v4(0, 0, 0, 1), 24)).unwrap();
+            ip_addrs
+                .push(IpCidr::new(IpAddress::v4(0, 0, 0, 1), 24))
+                .unwrap();
         });
-        iface.routes_mut().add_default_ipv4_route(Ipv4Address::new(0, 0, 0, 1)).unwrap();
+        iface
+            .routes_mut()
+            .add_default_ipv4_route(Ipv4Address::new(0, 0, 0, 1))
+            .unwrap();
         let mut runtime_builder = TokioRuntimeBuilder::new_multi_thread();
-        runtime_builder.worker_threads(32).enable_all().thread_name("PPAASS-RUST-THREAD");
+        runtime_builder
+            .worker_threads(32)
+            .enable_all()
+            .thread_name("PPAASS-RUST-THREAD");
         // .unhandled_panic(UnhandledPanic::ShutdownRuntime);
         let tokio_rutime = runtime_builder.build().expect("Fail to start vpn runtime.");
 
@@ -131,11 +147,14 @@ impl PpaassVpnServer {
                                 debug!("<<<< No data in device tx queue, wait for a momoent... ");
                                 tokio::time::sleep(TokioDuration::from_millis(100)).await;
                                 continue;
-                            },
+                            }
                         }
                     };
                     let mut tun_write = tun_write.lock().await;
-                    debug!("<<<< Write data to tun:\n{}\n", print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&data));
+                    debug!(
+                        "<<<< Write data to tun:\n{}\n",
+                        print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&data)
+                    );
                     if let Err(e) = tun_write.write(&data) {
                         error!("<<<< Fail to write data to tun because of error: {e:?}");
                         continue;
@@ -162,11 +181,13 @@ impl PpaassVpnServer {
                                     debug!(">>>> No data in tun, wait for a momoent... ");
                                     tokio::time::sleep(TokioDuration::from_millis(100)).await;
                                     continue;
-                                },
+                                }
                                 _ => {
                                     error!(">>>> Fail to read tun data because of error: {e:?}");
-                                    return Err(anyhow!(">>>> Fail to read tun data because of error: {e:?}"));
-                                },
+                                    return Err(anyhow!(
+                                        ">>>> Fail to read tun data because of error: {e:?}"
+                                    ));
+                                }
                             },
                         };
                         tun_read_buf[..size].to_vec()
@@ -194,12 +215,17 @@ impl PpaassVpnServer {
                             Socket::Icmp(_) => todo!(),
                             Socket::Udp(_) => todo!(),
                             Socket::Tcp(tcp_socket) => {
-                                if let Err(e) =
-                                    Self::post_poll_handle_tcp_socket(tcp_connections.clone(), socket_handle_mapping.clone(), tcp_socket, handle).await
+                                if let Err(e) = Self::post_poll_handle_tcp_socket(
+                                    tcp_connections.clone(),
+                                    socket_handle_mapping.clone(),
+                                    tcp_socket,
+                                    handle,
+                                )
+                                .await
                                 {
                                     error!(">>>> Fail to post poll handle [handle={handle}] tcp socket because of error: {e:?}");
                                 };
-                            },
+                            }
                             Socket::Dhcpv4(_) => todo!(),
                             Socket::Dns(_) => todo!(),
                         }
@@ -244,17 +270,31 @@ impl PpaassVpnServer {
                     anyhow!("Fail to parse ip v4 packet payload to tcp packet because of error: {e:?}")
                 })?;
 
-                debug!(">>>> Receive tcp packet from tun:\n{}\n", print_packet(&ipv4_packet));
+                debug!(
+                    ">>>> Receive tcp packet from tun:\n{}\n",
+                    print_packet(&ipv4_packet)
+                );
 
-                let tcp_connection_key =
-                    TcpConnectionKey::new(ipv4_packet.src_addr().into(), tcp_packet.src_port(), ipv4_packet.dst_addr().into(), tcp_packet.dst_port());
+                let tcp_connection_key = TcpConnectionKey::new(
+                    ipv4_packet.src_addr().into(),
+                    tcp_packet.src_port(),
+                    ipv4_packet.dst_addr().into(),
+                    tcp_packet.dst_port(),
+                );
 
                 {
                     let mut tcp_connections = tcp_connections.lock().await;
                     if let Entry::Vacant(entry) = tcp_connections.entry(tcp_connection_key) {
                         debug!("Create a new tcp connection: {tcp_connection_key}");
                         let (tun_input_sender, tun_input_receiver) = channel(1024);
-                        let tcp_connection = TcpConnection::new(tcp_connection_key, iface, device, sockets, tun_input_receiver).await?;
+                        let tcp_connection = TcpConnection::new(
+                            tcp_connection_key,
+                            iface,
+                            device,
+                            sockets,
+                            tun_input_receiver,
+                        )
+                        .await?;
                         let mut socket_handle_mapping = socket_handle_mapping.lock().await;
                         socket_handle_mapping.insert(tcp_connection.get_socket_handle(), tcp_connection_key);
 
@@ -265,26 +305,32 @@ impl PpaassVpnServer {
                         entry.tcp_connection.start().await;
                     };
                 }
-            },
+            }
             IpProtocol::Udp => {
                 let ipv4_packet_payload = ipv4_packet.payload();
                 let udp_packet = UdpPacket::new_checked(ipv4_packet_payload).map_err(|e| {
                     error!(">>>> Fail to parse ip v4 packet payload to udp packet because of error: {e:?}");
                     anyhow!("Fail to parse ip v4 packet payload to udp packet because of error: {e:?}")
                 })?;
-                debug!(">>>> Receive udp packet from tun:\n{}\n", print_packet(&ipv4_packet));
-            },
+                debug!(
+                    ">>>> Receive udp packet from tun:\n{}\n",
+                    print_packet(&ipv4_packet)
+                );
+            }
             IpProtocol::Icmp => {
                 let ipv4_packet_payload = ipv4_packet.payload();
                 let icmpv4_packet = Icmpv4Packet::new_checked(ipv4_packet_payload).map_err(|e| {
                     error!(">>>> Fail to parse ip v4 packet payload to icmpv4 packet because of error: {e:?}");
                     anyhow!("Fail to parse ip v4 packet payload to icmpv4 packet because of error: {e:?}")
                 })?;
-                debug!(">>>> Receive icmpv4 packet from tun:\n{}\n", print_packet(&ipv4_packet));
-            },
+                debug!(
+                    ">>>> Receive icmpv4 packet from tun:\n{}\n",
+                    print_packet(&ipv4_packet)
+                );
+            }
             other => {
                 trace!(">>>> Unsupport protocol: {other}");
-            },
+            }
         };
 
         Ok(())
@@ -316,13 +362,16 @@ impl PpaassVpnServer {
             return Ok(());
         }
         while tcp_socket.can_recv() {
+            debug!(">>>> Tcp connection [{tcp_connection_key}] become can receive.");
             let mut receive_data = [0u8; 65535];
             let size = match tcp_socket.recv_slice(&mut receive_data) {
                 Ok(size) => size,
                 Err(e) => {
                     error!(">>>> Tcp connection [{tcp_connection_key}] fail to receive tun input because of error: {e:?}");
-                    return Err(anyhow!("Tcp connection [{tcp_connection_key}] fail to receive tun input because of error: {e:?}"));
-                },
+                    return Err(anyhow!(
+                        "Tcp connection [{tcp_connection_key}] fail to receive tun input because of error: {e:?}"
+                    ));
+                }
             };
             let receive_data = &receive_data[0..size];
             let tcp_connections = tcp_connections.lock().await;
@@ -331,12 +380,17 @@ impl PpaassVpnServer {
                 error!(">>>> Tcp connection [{tcp_connection_key}] can not found form repository.");
                return Err(anyhow!("Tcp connection [{tcp_connection_key}] can not found form repository."));
             };
-            if let Err(e) = tcp_connection_wrapper.tun_input_sender.send(receive_data.to_vec()).await {
+            if let Err(e) = tcp_connection_wrapper
+                .tun_input_sender
+                .send(receive_data.to_vec())
+                .await
+            {
                 error!(">>>> Tcp connection [{tcp_connection_key}] fail to send tun input to tcp connection because of error: {e:?}");
-                return Err(anyhow!("Tcp connection [{tcp_connection_key}] fail to send tun input to tcp connection because of error: {e:?}"));
+                return Err(anyhow!(
+                    "Tcp connection [{tcp_connection_key}] fail to send tun input to tcp connection because of error: {e:?}"
+                ));
             }
         }
-        while tcp_socket.can_send() {}
         Ok(())
     }
 }

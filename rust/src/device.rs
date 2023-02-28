@@ -73,7 +73,11 @@ impl<'a> TxToken for PpaassVpnTxToken<'a> {
     {
         let mut raw_data = vec![0; len];
         let result = f(&mut raw_data);
-        trace!("<<<< Ppaass vpn TX token [{}] transmit data:\n{}", self.id, print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&raw_data));
+        trace!(
+            "<<<< Ppaass vpn TX token [{}] transmit data:\n{}",
+            self.id,
+            print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&raw_data)
+        );
         self.tx_queue.push_back(raw_data);
         result
     }
@@ -121,7 +125,7 @@ impl Device for PpaassVpnDevice {
                 let tx_token = PpaassVpnTxToken::new(&mut self.tx_queue);
                 trace!(">>>> Ppaass vpn device create RX token: [{rx_token:?}] and TX token: [{tx_token:?}]",);
                 Some((rx_token, tx_token))
-            },
+            }
         }
     }
 

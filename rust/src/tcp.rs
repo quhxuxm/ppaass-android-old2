@@ -27,7 +27,11 @@ impl TcpConnectionKey {
 
 impl Debug for TcpConnectionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}:{}->{}:{}]", self.src_addr, self.src_port, self.dst_addr, self.dst_port)
+        write!(
+            f,
+            "[{}:{}->{}:{}]",
+            self.src_addr, self.src_port, self.dst_addr, self.dst_port
+        )
     }
 }
 
