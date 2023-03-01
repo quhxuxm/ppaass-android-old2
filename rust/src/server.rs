@@ -101,7 +101,7 @@ impl PpaassVpnServer {
             .unwrap();
         let mut runtime_builder = TokioRuntimeBuilder::new_multi_thread();
         runtime_builder
-            .worker_threads(32)
+            .worker_threads(256)
             .enable_all()
             .thread_name("PPAASS-RUST-THREAD");
         // .unhandled_panic(UnhandledPanic::ShutdownRuntime);
@@ -132,110 +132,111 @@ impl PpaassVpnServer {
         let tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionKey, TcpConnectionWrapper>>> = Default::default();
         let socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionKey>>> = Default::default();
 
-        let tx_guard = {
-            let server_id = server_id.clone();
-            let device = device.clone();
-            tokio_runtime.spawn(async move {
-                info!("Start task for write data to tun device on server [{server_id}]");
-                loop {
-                    let data = {
-                        let mut device = device.lock().await;
-                        match device.pop_tx() {
-                            Some(data) => data,
-                            None => {
-                                drop(device);
-                                debug!("<<<< No data in device tx queue, wait for a momoent... ");
-                                tokio::time::sleep(TokioDuration::from_millis(100)).await;
-                                continue;
-                            }
-                        }
-                    };
-                    let mut tun_write = tun_write.lock().await;
-                    debug!(
-                        "<<<< Write data to tun:\n{}\n",
-                        print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&data)
-                    );
-                    if let Err(e) = tun_write.write(&data) {
-                        error!("<<<< Fail to write data to tun because of error: {e:?}");
-                        continue;
-                    };
-                    if let Err(e) = tun_write.flush() {
-                        error!("<<<< Fail to flush data to tun because of error: {e:?}");
-                        continue;
-                    };
-                }
-            })
-        };
-        let rx_guard = {
-            tokio_runtime.spawn(async move {
-                info!("Start task for read data from tun device on server [{server_id}]");
-                loop {
-                    let tun_data = {
-                        let mut tun_read = tun_read.lock().await;
-                        let mut tun_read_buf = [0u8; 65535];
-                        let size = match tun_read.read(&mut tun_read_buf) {
-                            Ok(size) => size,
-                            Err(e) => match e.kind() {
-                                ErrorKind::WouldBlock => {
-                                    drop(tun_read);
-                                    debug!(">>>> No data in tun, wait for a momoent... ");
+        tokio_runtime.block_on(async move {
+            let tx_guard = {
+                let server_id = server_id.clone();
+                let device = device.clone();
+                tokio::spawn(async move {
+                    info!("Start task for write data to tun device on server [{server_id}]");
+                    loop {
+                        let data = {
+                            let mut device = device.lock().await;
+                            match device.pop_tx() {
+                                Some(data) => data,
+                                None => {
+                                    drop(device);
+                                    trace!("<<<< No data in device tx queue, wait for a momoent... ");
                                     tokio::time::sleep(TokioDuration::from_millis(100)).await;
                                     continue;
                                 }
-                                _ => {
-                                    error!(">>>> Fail to read tun data because of error: {e:?}");
-                                    return Err(anyhow!(
-                                        ">>>> Fail to read tun data because of error: {e:?}"
-                                    ));
-                                }
-                            },
-                        };
-                        tun_read_buf[..size].to_vec()
-                    };
-                    Self::pre_poll_handle_tun_input(
-                        &tun_data,
-                        iface.clone(),
-                        device.clone(),
-                        sockets.clone(),
-                        tcp_connections.clone(),
-                        socket_handle_mapping.clone(),
-                    )
-                    .await?;
-                    let mut device = device.lock().await;
-                    device.push_rx(tun_data);
-                    let mut iface = iface.lock().await;
-                    let mut sockets = sockets.lock().await;
-                    let socket_update = iface.poll(SmoltcpInstant::now(), &mut *device, &mut sockets);
-                    if !socket_update {
-                        return Ok(());
-                    }
-                    for (handle, socket) in sockets.iter_mut() {
-                        match socket {
-                            Socket::Raw(_) => todo!(),
-                            Socket::Icmp(_) => todo!(),
-                            Socket::Udp(_) => todo!(),
-                            Socket::Tcp(tcp_socket) => {
-                                if let Err(e) = Self::post_poll_handle_tcp_socket(
-                                    tcp_connections.clone(),
-                                    socket_handle_mapping.clone(),
-                                    tcp_socket,
-                                    handle,
-                                )
-                                .await
-                                {
-                                    error!(">>>> Fail to post poll handle [handle={handle}] tcp socket because of error: {e:?}");
-                                };
                             }
-                            Socket::Dhcpv4(_) => todo!(),
-                            Socket::Dns(_) => todo!(),
+                        };
+                        let mut tun_write = tun_write.lock().await;
+                        debug!(
+                            "<<<< Write data to tun:\n{}\n",
+                            print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&data)
+                        );
+                        if let Err(e) = tun_write.write(&data) {
+                            error!("<<<< Fail to write data to tun because of error: {e:?}");
+                            continue;
+                        };
+                        if let Err(e) = tun_write.flush() {
+                            error!("<<<< Fail to flush data to tun because of error: {e:?}");
+                            continue;
+                        };
+                    }
+                })
+            };
+            let rx_guard = {
+                tokio::spawn(async move {
+                    info!("Start task for read data from tun device on server [{server_id}]");
+                    loop {
+                        let tun_data = {
+                            let mut tun_read = tun_read.lock().await;
+                            let mut tun_read_buf = [0u8; 65535];
+                            let size = match tun_read.read(&mut tun_read_buf) {
+                                Ok(size) => size,
+                                Err(e) => match e.kind() {
+                                    ErrorKind::WouldBlock => {
+                                        drop(tun_read);
+                                        trace!(">>>> No data in tun, wait for a momoent... ");
+                                        tokio::time::sleep(TokioDuration::from_millis(100)).await;
+                                        continue;
+                                    }
+                                    _ => {
+                                        error!(">>>> Fail to read tun data because of error: {e:?}");
+                                        return Err(anyhow!(
+                                            ">>>> Fail to read tun data because of error: {e:?}"
+                                        ));
+                                    }
+                                },
+                            };
+                            tun_read_buf[..size].to_vec()
+                        };
+                        Self::pre_poll_handle_tun_input(
+                            &tun_data,
+                            iface.clone(),
+                            device.clone(),
+                            sockets.clone(),
+                            tcp_connections.clone(),
+                            socket_handle_mapping.clone(),
+                        )
+                        .await?;
+                        let mut device = device.lock().await;
+                        device.push_rx(tun_data);
+                        let mut iface = iface.lock().await;
+                        let mut sockets = sockets.lock().await;
+                        let socket_update = iface.poll(SmoltcpInstant::now(), &mut *device, &mut sockets);
+                        if !socket_update {
+                            return Ok(());
+                        }
+                        for (handle, socket) in sockets.iter_mut() {
+                            match socket {
+                                Socket::Raw(_) => todo!(),
+                                Socket::Icmp(_) => todo!(),
+                                Socket::Udp(_) => todo!(),
+                                Socket::Tcp(tcp_socket) => {
+                                    if let Err(e) = Self::post_poll_handle_tcp_socket(
+                                        tcp_connections.clone(),
+                                        socket_handle_mapping.clone(),
+                                        tcp_socket,
+                                        handle,
+                                    )
+                                    .await
+                                    {
+                                        error!(">>>> Fail to post poll handle [handle={handle}] tcp socket because of error: {e:?}");
+                                    };
+                                }
+                                Socket::Dhcpv4(_) => todo!(),
+                                Socket::Dns(_) => todo!(),
+                            }
                         }
                     }
-                }
-                Ok(())
-            })
-        };
-
-        let socket_guard = tokio::spawn(async move {});
+                    Ok(())
+                })
+            };
+            tokio::join!(rx_guard, tx_guard);
+        });
 
         Ok(())
     }

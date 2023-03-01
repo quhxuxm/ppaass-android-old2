@@ -57,7 +57,7 @@ impl TcpConnection {
             let mut sockets = sockets.lock().await;
             sockets.add(socket)
         };
-
+        debug!(">>>> Success create tcp connection [{connection_key}]");
         Ok(Self {
             connection_key,
             tub_input_receiver: Arc::new(TokioMutex::new(tub_input_receiver)),
@@ -79,9 +79,8 @@ impl TcpConnection {
         let tub_input_receiver = self.tub_input_receiver.clone();
         let connection_key = self.connection_key;
         let socket_handle = self.socket_handle;
-
+        debug!("Tcp connection [{connection_key}] start to serve...");
         tokio::spawn(async move {
-            debug!("Tcp connection [{connection_key}] start to serve...");
             let dst_socket = match tokio::net::TcpSocket::new_v4() {
                 Ok(dst_socket) => dst_socket,
                 Err(e) => {
@@ -95,62 +94,65 @@ impl TcpConnection {
                 return;
             };
             let dst_socket_addr = SocketAddr::new(IpAddr::V4(connection_key.dst_addr), connection_key.dst_port);
-            let dst_tcp_stream = match timeout(Duration::from_secs(10), dst_socket.connect(dst_socket_addr)).await {
+            let sockets_for_connect = sockets.clone();
+            let mut sockets_for_connect = sockets_for_connect.lock().await;
+            let dst_tcp_stream = match timeout(Duration::from_secs(5), dst_socket.connect(dst_socket_addr)).await {
                 Ok(Ok(dst_tcp_stream)) => dst_tcp_stream,
                 Ok(Err(e)) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of error: {e:?}");
+                    sockets_for_connect.remove(socket_handle);
                     return;
                 }
                 Err(_) => {
                     error!(">>>> Tcp connection [{connection_key}] fail to connect to destination because of timeout");
+                    sockets_for_connect.remove(socket_handle);
                     return;
                 }
             };
+            drop(sockets_for_connect);
+            debug!(">>>> Tcp connection [{connection_key}] success connect to destination.");
             let (mut dst_tcp_read, mut dst_tcp_write) = dst_tcp_stream.into_split();
             tokio::spawn(async move {
-                let mut dst_data = vec![0u8; 65535];
+                debug!("<<<< Tcp connection [{connection_key}] start destination to device relay.");
                 loop {
-                    let iface = iface.lock().await;
-                    let device = device.lock().await;
-                    
+                    let mut iface = iface.lock().await;
+                    let mut device = device.lock().await;
+
                     let mut sockets = sockets.lock().await;
-                    
+
                     let socket = sockets.get_mut::<SmolTcpSocket>(socket_handle);
 
                     if socket.can_send() {
-                        let min_data_size = if socket.send_queue() < dst_data.len() {
-                            socket.send_queue()
-                        } else {
-                            dst_data.len()
-                        };
-                        if min_data_size > 0 {
-                            let send_data = dst_data.drain(..min_data_size).collect::<Vec<u8>>();
-                            if let Err(e) = socket.send_slice(&send_data) {
-                                error!("<<<< Tcp connection [{connection_key}] fail to semd destination data to vpn device because of error: {e:?}");
+                        let initial_data_size = socket.send_queue();
+                        let mut dst_data = vec![0u8; initial_data_size];
+                        let size = match dst_tcp_read.read(&mut dst_data).await {
+                            Ok(0) => {
+                                error!("<<<< Tcp connection [{connection_key}] read destination data complete.");
                                 return;
-                            };
-                            continue;
-                        }
+                            }
+                            Ok(size) => size,
+                            Err(e) => {
+                                error!("<<<< Tcp connection [{connection_key}] fail to read destination data because of error: {e:?}");
+                                sockets.remove(socket_handle);
+                                return;
+                            }
+                        };
+
+                        if let Err(e) = socket.send_slice(&dst_data[..size]) {
+                            error!("<<<< Tcp connection [{connection_key}] fail to semd destination data to vpn device because of error: {e:?}");
+                            return;
+                        };
                     }
-                    dst_data = vec![0u8; 65535];
-                    let size = match dst_tcp_read.read(&mut dst_data).await {
-                        Ok(0) => {
-                            return;
-                        }
-                        Ok(size) => size,
-                        Err(e) => {
-                            error!("<<<< Tcp connection [{connection_key}] fail to read destination data because of error: {e:?}");
-                            return;
-                        }
-                    };
-                    dst_data = dst_data[..size].to_vec();
+                    iface.poll(Instant::now(), &mut *device, &mut sockets);
                 }
             });
+            debug!(">>>> Tcp connection [{connection_key}] start device to destination relay.");
             loop {
                 let mut tub_input_receiver = tub_input_receiver.lock().await;
                 let tun_input = tub_input_receiver.recv().await;
                 let tun_input = match tun_input {
                     None => {
+                        debug!(">>>> Tcp connection [{connection_key}] complete read tun data");
                         break;
                     }
                     Some(tun_input) => tun_input,
