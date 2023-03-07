@@ -49,7 +49,7 @@ use crate::{
 
 struct TcpConnectionWrapper {
     tcp_connection: TcpConnection,
-    tun_input_sender: Sender<Vec<u8>>,
+    device_data_sender: Sender<Vec<u8>>,
 }
 
 pub(crate) struct PpaassVpnServer
@@ -138,7 +138,7 @@ impl PpaassVpnServer {
         let write_device_notifier = Arc::new(Notify::new());
         let poll_iface_notifier = Arc::new(Notify::new());
 
-        let socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionId>>> = Default::default();
+        let virtial_socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, &TcpConnectionWrapper>>> = Default::default();
 
         let poll_iface_task = {
             let poll_iface_notifier = poll_iface_notifier.clone();
@@ -189,9 +189,11 @@ impl PpaassVpnServer {
         };
         let write_device_task = {
             let write_device_notifier = write_device_notifier.clone();
+            let server_id = server_id.clone();
+            let virtual_device = virtual_device.clone();
             async move {
                 let server_id = server_id.clone();
-                let virtual_device = virtual_device.clone();
+
                 info!("Start task for write data to tun device on server [{server_id}]");
                 loop {
                     write_device_notifier.notified().await;
@@ -218,6 +220,10 @@ impl PpaassVpnServer {
         };
 
         let read_device_task = {
+            let tcp_connections = self.tcp_connections.clone();
+            let server_id = server_id.clone();
+            let virtual_device = virtual_device.clone();
+            let write_device_notifier = write_device_notifier.clone();
             async move {
                 info!("Start task for read data from tun device on server [{server_id}]");
                 loop {
@@ -235,29 +241,30 @@ impl PpaassVpnServer {
                                 }
                                 _ => {
                                     error!(">>>> Fail to read tun data because of error: {e:?}");
-                                    return Err(anyhow!(
-                                        ">>>> Fail to read tun data because of error: {e:?}"
-                                    ));
+                                    return;
                                 }
                             },
                         };
                         device_data[..size].to_vec()
                     };
-                    Self::handle_device_data(
+                    if let Err(e) = Self::handle_device_data(
                         &device_data,
                         virtual_iface.clone(),
                         virtual_device.clone(),
                         virtual_sockets.clone(),
                         tcp_connections.clone(),
-                        socket_handle_mapping.clone(),
+                        virtial_socket_handle_mapping.clone(),
                     )
-                    .await?;
+                    .await
+                    {
+                        error!(">>>> Fail to handle device data because of error: {e:?}")
+                    };
                 }
             }
         };
 
         async_runtime.block_on(async move {
-            tokio::join!(write_device_task, read_device_task);
+            tokio::join!(poll_iface_task, write_device_task, read_device_task);
         });
 
         Ok(())
@@ -269,7 +276,8 @@ impl PpaassVpnServer {
         virtual_device: Arc<TokioMutex<VirtualDevice>>,
         virtual_sockets: Arc<TokioMutex<SocketSet<'static>>>,
         tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionId, TcpConnectionWrapper>>>,
-        socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionId>>>,
+        virtual_socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, &TcpConnectionWrapper>>>,
+        poll_ifrace_notifier: Arc<Notify>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(device_data).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
@@ -309,22 +317,24 @@ impl PpaassVpnServer {
                     let mut tcp_connections = tcp_connections.lock().await;
                     if let Entry::Vacant(entry) = tcp_connections.entry(tcp_connection_id) {
                         debug!("Create a new tcp connection: {tcp_connection_id}");
-                        let (tun_input_sender, tun_input_receiver) = channel(1024);
+                        let (device_data_sender, device_data_receiver) = channel(1024);
                         let tcp_connection = TcpConnection::new(
                             tcp_connection_id,
                             virtual_iface,
                             virtual_device,
                             virtual_sockets,
-                            tun_input_receiver,
+                            device_data_receiver,
+                            poll_ifrace_notifier.clone(),
                         )
                         .await?;
-                        let mut socket_handle_mapping = socket_handle_mapping.lock().await;
-                        socket_handle_mapping.insert(tcp_connection.get_socket_handle(), tcp_connection_id);
-
+                        let virtual_socket_handle = tcp_connection.get_socket_handle();
                         let entry = entry.insert(TcpConnectionWrapper {
                             tcp_connection,
-                            tun_input_sender,
+                            device_data_sender,
                         });
+                        let mut virtial_socket_handle_mapping = virtual_socket_handle_mapping.lock().await;
+                        virtial_socket_handle_mapping.insert(virtual_socket_handle, entry);
+
                         entry.tcp_connection.start().await;
                     };
                 }

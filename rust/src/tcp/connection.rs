@@ -17,7 +17,7 @@ use smoltcp::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::{mpsc::Receiver, Mutex as TokioMutex},
+    sync::{mpsc::Receiver, Mutex as TokioMutex, Notify},
     time::timeout,
 };
 
@@ -32,6 +32,7 @@ pub(crate) struct TcpConnection {
     virtual_device: Arc<TokioMutex<VirtualDevice>>,
     virtual_sockets: Arc<TokioMutex<SocketSet<'static>>>,
     virtual_socket_handle: SocketHandle,
+    poll_iface_notifier: Arc<Notify>,
 }
 
 impl TcpConnection {
@@ -41,6 +42,7 @@ impl TcpConnection {
         virtual_device: Arc<TokioMutex<VirtualDevice>>,
         virtual_sockets: Arc<TokioMutex<SocketSet<'static>>>,
         device_input_receiver: Receiver<Vec<u8>>,
+        poll_iface_notifier: Arc<Notify>,
     ) -> Result<Self> {
         let listen_addr = SocketAddr::new(IpAddr::V4(id.dst_addr), id.dst_port);
         let mut virtual_socket = SmolTcpSocket::new(
@@ -58,6 +60,7 @@ impl TcpConnection {
             virtual_sockets.add(virtual_socket)
         };
         debug!(">>>> Success create tcp connection [{id}]");
+        poll_iface_notifier.notify_one();
         Ok(Self {
             id,
             device_input_receiver: Arc::new(TokioMutex::new(device_input_receiver)),
@@ -65,6 +68,7 @@ impl TcpConnection {
             virtual_socket_handle,
             virtual_iface,
             virtual_device,
+            poll_iface_notifier,
         })
     }
 
