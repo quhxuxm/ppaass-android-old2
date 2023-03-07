@@ -7,14 +7,14 @@ mod connection;
 pub(crate) use connection::TcpConnection;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TcpConnectionKey {
+pub(crate) struct TcpConnectionId {
     pub src_addr: Ipv4Addr,
     pub dst_addr: Ipv4Addr,
     pub src_port: u16,
     pub dst_port: u16,
 }
 
-impl TcpConnectionKey {
+impl TcpConnectionId {
     pub(crate) fn new(src_addr: Ipv4Addr, src_port: u16, dst_addr: Ipv4Addr, dst_port: u16) -> Self {
         Self {
             src_addr,
@@ -25,7 +25,7 @@ impl TcpConnectionKey {
     }
 }
 
-impl Debug for TcpConnectionKey {
+impl Debug for TcpConnectionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -35,7 +35,7 @@ impl Debug for TcpConnectionKey {
     }
 }
 
-impl Display for TcpConnectionKey {
+impl Display for TcpConnectionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
