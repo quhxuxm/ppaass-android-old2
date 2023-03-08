@@ -50,7 +50,7 @@ use crate::{
 
 struct TcpConnectionCommunicator {
     device_data_sender: Sender<Vec<u8>>,
-    dst_data_receiver: Receiver<Vec<u8>>,
+    dst_data_buffer: Arc<TokioMutex<Vec<u8>>>,
 }
 
 pub(crate) struct PpaassVpnServer
@@ -154,6 +154,7 @@ impl PpaassVpnServer {
             let virtual_sockets = virtual_sockets.clone();
             let tcp_connections = tcp_connections.clone();
             let virtial_tcp_socket_handle_mapping = virtial_tcp_socket_handle_mapping.clone();
+            let write_device_notifier = write_device_notifier.clone();
             async move {
                 loop {
                     poll_iface_notifier.notified().await;
@@ -205,19 +206,21 @@ impl PpaassVpnServer {
                                 if virtual_socket.may_send() {
                                     let mut virtial_tcp_socket_handle_mapping = virtial_tcp_socket_handle_mapping.lock().await;
                                     let mut tcp_connections = tcp_connections.lock().await;
-                                    let Some( tcp_connection_communicator) = Self::find_tcp_connection_communicator(
+                                    let Some(tcp_connection_communicator) = Self::find_tcp_connection_communicator(
                                         virtual_socket_handle,
                                         &mut virtial_tcp_socket_handle_mapping,
                                         &mut tcp_connections,
                                     )else{
                                         continue;
                                     };
-                                   match tcp_connection_communicator.dst_data_receiver.try_recv(){
-                                    Ok(dst_data) => todo!(),
-                                    Err(e) => {
-                                        error!("")
-                                    },
-                                };
+                                    let mut dst_data_buffer = tcp_connection_communicator.dst_data_buffer.lock().await;
+                                    let send_data = dst_data_buffer
+                                        .drain(..virtual_socket.send_queue())
+                                        .collect::<Vec<u8>>();
+                                    if let Err(e) = virtual_socket.send_slice(&send_data) {
+                                        error!("<<<< Fail to write destination data to device because of error: {e:?}")
+                                    };
+                                    write_device_notifier.notify_one();
                                 }
                             }
                             Socket::Dhcpv4(virtual_socket) => todo!(),
@@ -381,14 +384,10 @@ impl PpaassVpnServer {
                         virtual_sockets.add(virtual_tcp_socket)
                     };
                     debug!(">>>> Success create tcp connection [{tcp_connection_id}]");
-                    let (tcp_connection, dst_data_receiver) = TcpConnection::new(
-                        tcp_connection_id,
-                        virtual_socket_handle,
-                        device_data_receiver,
-                    )?;
+                    let (tcp_connection, dst_data_buffer) = TcpConnection::new(tcp_connection_id, device_data_receiver)?;
                     entry.insert(TcpConnectionCommunicator {
                         device_data_sender,
-                        dst_data_receiver,
+                        dst_data_buffer,
                     });
                     let mut virtial_socket_handle_mapping = virtual_tcp_socket_handle_mapping.lock().await;
                     virtial_socket_handle_mapping.insert(virtual_socket_handle, tcp_connection_id);

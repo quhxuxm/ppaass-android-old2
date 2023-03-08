@@ -31,23 +31,23 @@ use super::TcpConnectionId;
 pub(crate) struct TcpConnection {
     id: TcpConnectionId,
     device_input_receiver: Arc<TokioMutex<Receiver<Vec<u8>>>>,
-    virtual_socket_handle: SocketHandle,
-    dst_data_sender: Sender<Vec<u8>>,
+    dst_data_buffer: Arc<TokioMutex<Vec<u8>>>,
 }
 
 impl TcpConnection {
-    pub fn new(id: TcpConnectionId, virtual_socket_handle: SocketHandle, device_input_receiver: Receiver<Vec<u8>>) -> Result<(Self, Receiver<Vec<u8>>)> {
-        let (dst_data_sender, dst_data_receiver) = channel::<Vec<u8>>(1024);
+    pub fn new(id: TcpConnectionId, device_input_receiver: Receiver<Vec<u8>>) -> Result<(Self, Arc<TokioMutex<Vec<u8>>>)> {
+        let dst_data_buffer: Arc<TokioMutex<Vec<u8>>> = Default::default();
         Ok((
             Self {
                 id,
                 device_input_receiver: Arc::new(TokioMutex::new(device_input_receiver)),
-                virtual_socket_handle,
-                dst_data_sender,
+                dst_data_buffer: dst_data_buffer.clone(),
             },
-            dst_data_receiver,
+            dst_data_buffer,
         ))
     }
 
-    pub async fn run(self) {}
+    pub async fn run(self) {
+        
+    }
 }
