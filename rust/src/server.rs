@@ -74,9 +74,7 @@ impl PpaassVpnServer {
     pub(crate) fn new(device_fd: i32) -> Result<Self> {
         let id = Uuid::new_v4().to_string();
         let id = id.replace('-', "");
-
         info!("Create ppaass vpn server instance [{id}]");
-        let tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionId, TcpConnectionCommunicator>>> = Default::default();
         Ok(Self { id, device_fd })
     }
 
@@ -149,7 +147,7 @@ impl PpaassVpnServer {
         let tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionId, TcpConnectionCommunicator>>> = Default::default();
         let poll_iface_task = {
             let poll_iface_notifier = poll_iface_notifier.clone();
-            let virtual_iface = virtual_iface.clone();
+
             let virtual_device = virtual_device.clone();
             let virtual_sockets = virtual_sockets.clone();
             let tcp_connections = tcp_connections.clone();
@@ -220,6 +218,7 @@ impl PpaassVpnServer {
                                     if let Err(e) = virtual_socket.send_slice(&send_data) {
                                         error!("<<<< Fail to write destination data to device because of error: {e:?}")
                                     };
+                                    poll_iface_notifier.notify_one();
                                     write_device_notifier.notify_one();
                                 }
                             }
@@ -231,7 +230,6 @@ impl PpaassVpnServer {
             }
         };
         let write_device_task = {
-            let write_device_notifier = write_device_notifier.clone();
             let server_id = server_id.clone();
             let virtual_device = virtual_device.clone();
             async move {
@@ -263,10 +261,6 @@ impl PpaassVpnServer {
         };
 
         let read_device_task = {
-            let tcp_connections = tcp_connections.clone();
-            let server_id = server_id.clone();
-            let virtual_device = virtual_device.clone();
-            let write_device_notifier = write_device_notifier.clone();
             async move {
                 info!("Start task for read data from tun device on server [{server_id}]");
                 loop {
@@ -292,12 +286,9 @@ impl PpaassVpnServer {
                     };
                     if let Err(e) = Self::handle_device_data(
                         &device_data,
-                        virtual_iface.clone(),
-                        virtual_device.clone(),
                         virtual_sockets.clone(),
                         tcp_connections.clone(),
                         virtial_tcp_socket_handle_mapping.clone(),
-                        poll_iface_notifier.clone(),
                     )
                     .await
                     {
@@ -319,12 +310,9 @@ impl PpaassVpnServer {
 
     async fn handle_device_data(
         device_data: &[u8],
-        virtual_iface: Arc<TokioMutex<Interface>>,
-        virtual_device: Arc<TokioMutex<VirtualDevice>>,
         virtual_sockets: Arc<TokioMutex<SocketSet<'static>>>,
         tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionId, TcpConnectionCommunicator>>>,
         virtual_tcp_socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionId>>>,
-        poll_iface_notifier: Arc<Notify>,
     ) -> Result<()> {
         let ip_version = IpVersion::of_packet(device_data).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
@@ -370,8 +358,8 @@ impl PpaassVpnServer {
                         tcp_connection_id.dst_port,
                     );
                     let mut virtual_tcp_socket = VirtualTcpSocket::new(
-                        SocketBuffer::new(vec![0; 65535]),
-                        SocketBuffer::new(vec![0; 65535]),
+                        SocketBuffer::new(vec![0; 6553500]),
+                        SocketBuffer::new(vec![0; 6553500]),
                     );
                     if let Err(e) = virtual_tcp_socket.listen::<SocketAddr>(virtual_socket_listen_addr) {
                         error!(">>>> Tcp connection [{tcp_connection_id}] fail to listen vpn tcp socket because of error: {e:?}");
