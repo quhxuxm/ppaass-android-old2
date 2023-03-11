@@ -102,14 +102,14 @@ impl TcpConnection {
                 };
 
                 debug!(
-                    ">>>> Tcp connection [{tcp_connection_id}] receive tun data:\n{}\n",
+                    ">>>> Tcp connection [{tcp_connection_id}] receive device data:\n{}\n",
                     pretty_hex::pretty_hex(&device_data)
                 );
                 if let Err(e) = dst_tcp_write.write(&device_data).await {
-                    error!(">>>> Tcp connection [{tcp_connection_id}] fail to write tun data to destination because of error: {e:?}")
+                    error!(">>>> Tcp connection [{tcp_connection_id}] fail to write device data to destination because of error: {e:?}")
                 };
                 if let Err(e) = dst_tcp_write.flush().await {
-                    error!(">>>> Tcp connection [{tcp_connection_id}] fail to flush tun data to destination because of error: {e:?}")
+                    error!(">>>> Tcp connection [{tcp_connection_id}] fail to flush device data to destination because of error: {e:?}")
                 };
             }
         });

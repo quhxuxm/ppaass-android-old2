@@ -57,14 +57,12 @@ pub(crate) struct PpaassVpnServer
 where
     Self: 'static,
 {
-    id: String,
     device_fd: i32,
 }
 
 impl Debug for PpaassVpnServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PpaassVpnServer")
-            .field("id", &self.id)
             .field("device_fd", &self.device_fd)
             .finish()
     }
@@ -72,10 +70,8 @@ impl Debug for PpaassVpnServer {
 
 impl PpaassVpnServer {
     pub(crate) fn new(device_fd: i32) -> Result<Self> {
-        let id = Uuid::new_v4().to_string();
-        let id = id.replace('-', "");
-        info!("Create ppaass vpn server instance [{id}]");
-        Ok(Self { id, device_fd })
+        info!("Create ppaass vpn server instance");
+        Ok(Self { device_fd })
     }
 
     fn init() -> (
@@ -100,7 +96,7 @@ impl PpaassVpnServer {
             .unwrap();
         let mut async_runtime_builder = TokioRuntimeBuilder::new_multi_thread();
         async_runtime_builder
-            .worker_threads(256)
+            .worker_threads(64)
             .enable_all()
             .thread_name("PPAASS-RUST-THREAD");
         let async_rutime = async_runtime_builder
@@ -133,157 +129,172 @@ impl PpaassVpnServer {
     }
 
     pub(crate) fn start(self) -> Result<()> {
-        let server_id = self.id.clone();
-        info!("Start ppaass vpn server instance [{server_id}]");
+        info!("Start ppaass vpn server instance");
         let device_fd = self.device_fd;
         let (device_file_read, device_file_write) = Self::split_device_file(device_fd);
         info!("Ready to prepare device file read and write");
 
         let (async_runtime, virtual_iface, virtual_device, virtual_sockets) = Self::init();
         let write_device_notifier = Arc::new(Notify::new());
+        info!("Ready to prepare device write notifier");
         let poll_iface_notifier = Arc::new(Notify::new());
-
+        info!("Ready to prepare iface poll notifier");
         let virtial_tcp_socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionId>>> = Default::default();
         let tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionId, TcpConnectionCommunicator>>> = Default::default();
-        let poll_iface_task = {
-            let poll_iface_notifier = poll_iface_notifier.clone();
 
-            let virtual_device = virtual_device.clone();
-            let virtual_sockets = virtual_sockets.clone();
-            let tcp_connections = tcp_connections.clone();
-            let virtial_tcp_socket_handle_mapping = virtial_tcp_socket_handle_mapping.clone();
-            let write_device_notifier = write_device_notifier.clone();
-            async move {
-                loop {
-                    poll_iface_notifier.notified().await;
-                    let mut virtual_iface = virtual_iface.lock().await;
-                    let mut virtual_device = virtual_device.lock().await;
-                    let mut virtual_sockets = virtual_sockets.lock().await;
-                    let updated = virtual_iface.poll(
-                        SmoltcpInstant::now(),
-                        &mut *virtual_device,
-                        &mut virtual_sockets,
-                    );
-                    if !updated {
-                        continue;
-                    }
-                    for (virtual_socket_handle, virtual_socket) in virtual_sockets.iter_mut() {
-                        match virtual_socket {
-                            Socket::Raw(virtual_socket) => todo!(),
-                            Socket::Icmp(virtual_socket) => todo!(),
-                            Socket::Udp(virtual_socket) => todo!(),
-                            Socket::Tcp(virtual_socket) => {
-                                if virtual_socket.may_recv() {
-                                    let mut device_data = vec![0u8; virtual_socket.recv_queue()];
-                                    let size = match virtual_socket.recv_slice(&mut device_data) {
-                                        Ok(size) => size,
-                                        Err(e) => {
-                                            error!(">>>> Fail to receive data from device because of error: {e:?}");
+        info!("Read device task prepared");
+        async_runtime.block_on(async {
+            info!("Start vpn service async runtime");
+
+            let poll_iface_task = {
+                let poll_iface_notifier = poll_iface_notifier.clone();
+                let virtual_device = virtual_device.clone();
+                let virtual_sockets = virtual_sockets.clone();
+                let tcp_connections = tcp_connections.clone();
+                let virtial_tcp_socket_handle_mapping = virtial_tcp_socket_handle_mapping.clone();
+                let write_device_notifier = write_device_notifier.clone();
+                async move {
+                    info!("Start iface poll task");
+                    loop {
+                        trace!("Waiting for iface poll notify");
+                        poll_iface_notifier.notified().await;
+                        trace!("Iface poll notify received");
+                        let mut virtual_iface = virtual_iface.lock().await;
+                        let mut virtual_device = virtual_device.lock().await;
+                        let mut virtual_sockets = virtual_sockets.lock().await;
+                        let updated = virtual_iface.poll(
+                            SmoltcpInstant::now(),
+                            &mut *virtual_device,
+                            &mut virtual_sockets,
+                        );
+                        if !updated {
+                            debug!("No sockets update on iface continue next loop");
+                            continue;
+                        }
+                        trace!("Some sockets update on iface, begine handle them");
+                        for (virtual_socket_handle, virtual_socket) in virtual_sockets.iter_mut() {
+                            match virtual_socket {
+                                Socket::Raw(virtual_socket) => todo!(),
+                                Socket::Icmp(virtual_socket) => todo!(),
+                                Socket::Udp(virtual_socket) => todo!(),
+                                Socket::Tcp(virtual_socket) => {
+                                    if virtual_socket.may_recv() {
+                                        let mut device_data = vec![0u8; virtual_socket.recv_queue()];
+                                        let size = match virtual_socket.recv_slice(&mut device_data) {
+                                            Ok(size) => size,
+                                            Err(e) => {
+                                                error!(">>>> Fail to receive data from device because of error: {e:?}");
+                                                continue;
+                                            }
+                                        };
+                                        let device_data = &device_data[..size];
+                                        let mut virtial_tcp_socket_handle_mapping = virtial_tcp_socket_handle_mapping.lock().await;
+                                        let mut tcp_connections = tcp_connections.lock().await;
+                                        let Some(tcp_connection_communicator) = Self::find_tcp_connection_communicator(
+                                        virtual_socket_handle,
+                                        &mut virtial_tcp_socket_handle_mapping,
+                                        &mut tcp_connections,
+                                    )else{
+                                        continue;
+                                    };
+                                        if let Err(e) = tcp_connection_communicator
+                                            .device_data_sender
+                                            .send(device_data.to_vec())
+                                            .await
+                                        {
+                                            error!(">>>> Fail to send device data to tcp connection because of error: {e:?}");
                                             continue;
-                                        }
-                                    };
-                                    let device_data = &device_data[..size];
-                                    let mut virtial_tcp_socket_handle_mapping = virtial_tcp_socket_handle_mapping.lock().await;
-                                    let mut tcp_connections = tcp_connections.lock().await;
-                                    let Some(tcp_connection_communicator) = Self::find_tcp_connection_communicator(
+                                        };
+                                    }
+                                    if virtual_socket.may_send() {
+                                        let mut virtial_tcp_socket_handle_mapping = virtial_tcp_socket_handle_mapping.lock().await;
+                                        let mut tcp_connections = tcp_connections.lock().await;
+                                        let Some(tcp_connection_communicator) = Self::find_tcp_connection_communicator(
                                         virtual_socket_handle,
                                         &mut virtial_tcp_socket_handle_mapping,
                                         &mut tcp_connections,
                                     )else{
+                                        error!("Can not find tcp connection communicator because of not exist.");
                                         continue;
                                     };
-                                    if let Err(e) = tcp_connection_communicator
-                                        .device_data_sender
-                                        .send(device_data.to_vec())
-                                        .await
-                                    {
-                                        error!(">>>> Fail to send device data to tcp connection because of error: {e:?}");
-                                        continue;
-                                    };
+                                        let mut dst_data_buffer = tcp_connection_communicator.dst_data_buffer.lock().await;
+                                        let send_data = dst_data_buffer
+                                            .drain(..virtual_socket.send_queue())
+                                            .collect::<Vec<u8>>();
+                                        if let Err(e) = virtual_socket.send_slice(&send_data) {
+                                            error!("<<<< Fail to write destination data to device because of error: {e:?}")
+                                        };
+                                        poll_iface_notifier.notify_one();
+                                        write_device_notifier.notify_one();
+                                    }
                                 }
-                                if virtual_socket.may_send() {
-                                    let mut virtial_tcp_socket_handle_mapping = virtial_tcp_socket_handle_mapping.lock().await;
-                                    let mut tcp_connections = tcp_connections.lock().await;
-                                    let Some(tcp_connection_communicator) = Self::find_tcp_connection_communicator(
-                                        virtual_socket_handle,
-                                        &mut virtial_tcp_socket_handle_mapping,
-                                        &mut tcp_connections,
-                                    )else{
-                                        continue;
-                                    };
-                                    let mut dst_data_buffer = tcp_connection_communicator.dst_data_buffer.lock().await;
-                                    let send_data = dst_data_buffer
-                                        .drain(..virtual_socket.send_queue())
-                                        .collect::<Vec<u8>>();
-                                    if let Err(e) = virtual_socket.send_slice(&send_data) {
-                                        error!("<<<< Fail to write destination data to device because of error: {e:?}")
-                                    };
-                                    poll_iface_notifier.notify_one();
-                                    write_device_notifier.notify_one();
-                                }
+                                Socket::Dhcpv4(virtual_socket) => todo!(),
+                                Socket::Dns(virtual_socket) => todo!(),
                             }
-                            Socket::Dhcpv4(virtual_socket) => todo!(),
-                            Socket::Dns(virtual_socket) => todo!(),
                         }
                     }
                 }
-            }
-        };
-        let write_device_task = {
-            let server_id = server_id.clone();
-            let virtual_device = virtual_device.clone();
-            async move {
-                let server_id = server_id.clone();
-
-                info!("Start task for write data to tun device on server [{server_id}]");
-                loop {
-                    write_device_notifier.notified().await;
-                    while let Some(data) = {
-                        let mut virtual_device = virtual_device.lock().await;
-                        virtual_device.pop_tx()
-                    } {
-                        let mut device_file_write = device_file_write.lock().await;
-                        debug!(
-                            "<<<< Write data to tun:\n{}\n",
-                            print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&data)
-                        );
-                        if let Err(e) = device_file_write.write(&data) {
-                            error!("<<<< Fail to write data to tun because of error: {e:?}");
-                            continue;
-                        };
-                        if let Err(e) = device_file_write.flush() {
-                            error!("<<<< Fail to flush data to tun because of error: {e:?}");
-                            continue;
-                        };
+            };
+            info!("Poll iface task prepared");
+            let write_device_task = {
+                let virtual_device = virtual_device.clone();
+                async move {
+                    info!("Start write device task");
+                    loop {
+                        trace!("Waiting for device write notify");
+                        write_device_notifier.notified().await;
+                        trace!("Device write notify received");
+                        while let Some(data) = {
+                            let mut virtual_device = virtual_device.lock().await;
+                            virtual_device.pop_tx()
+                        } {
+                            let mut device_file_write = device_file_write.lock().await;
+                            debug!(
+                                "<<<< Write data to tun:\n{}\n",
+                                print_packet_bytes::<Ipv4Packet<&'static [u8]>>(&data)
+                            );
+                            if let Err(e) = device_file_write.write(&data) {
+                                error!("<<<< Fail to write data to tun because of error: {e:?}");
+                                continue;
+                            };
+                            if let Err(e) = device_file_write.flush() {
+                                error!("<<<< Fail to flush data to tun because of error: {e:?}");
+                                continue;
+                            };
+                        }
                     }
                 }
-            }
-        };
-
-        let read_device_task = {
-            async move {
-                info!("Start task for read data from tun device on server [{server_id}]");
+            };
+            info!("Write device task prepared");
+            let read_device_task = async move {
+                info!("Start read device task");
                 loop {
+                    trace!("Begin the loop to read device data");
+
                     let device_data = {
-                        let mut device_file_read = device_file_read.lock().await;
                         let mut device_data = [0u8; 65535];
+                        let mut device_file_read = device_file_read.lock().await;
                         let size = match device_file_read.read(&mut device_data) {
-                            Ok(size) => size,
+                            Ok(size) => {
+                                trace!(">>>> Receive device data, size={size}");
+                                size
+                            }
                             Err(e) => match e.kind() {
                                 ErrorKind::WouldBlock => {
-                                    drop(device_file_read);
-                                    trace!(">>>> No data in tun, wait for a momoent... ");
+                                    trace!(">>>> No data in device, wait for a momoent ");
                                     tokio::time::sleep(TokioDuration::from_millis(100)).await;
                                     continue;
                                 }
                                 _ => {
-                                    error!(">>>> Fail to read tun data because of error: {e:?}");
-                                    return;
+                                    error!(">>>> Fail to read device data because of error: {e:?}");
+                                    continue;
                                 }
                             },
                         };
+
                         device_data[..size].to_vec()
                     };
+
                     if let Err(e) = Self::handle_device_data(
                         &device_data,
                         virtual_sockets.clone(),
@@ -298,11 +309,9 @@ impl PpaassVpnServer {
                     virtual_device.push_rx(device_data);
                     poll_iface_notifier.notify_one();
                 }
-            }
-        };
-
-        async_runtime.block_on(async move {
+            };
             tokio::join!(poll_iface_task, write_device_task, read_device_task);
+            info!("Vpn service async runtime shutdown")
         });
 
         Ok(())
@@ -314,6 +323,7 @@ impl PpaassVpnServer {
         tcp_connections: Arc<TokioMutex<HashMap<TcpConnectionId, TcpConnectionCommunicator>>>,
         virtual_tcp_socket_handle_mapping: Arc<TokioMutex<HashMap<SocketHandle, TcpConnectionId>>>,
     ) -> Result<()> {
+        trace!(">>>> Begin to handle device data");
         let ip_version = IpVersion::of_packet(device_data).map_err(|e| {
             error!(">>>> Fail to parse ip version from tun rx data because of error: {e:?}");
             anyhow!("Fail to parse ip version from tun rx data because of error: {e:?}")
@@ -327,6 +337,7 @@ impl PpaassVpnServer {
             anyhow!("Fail to parse ip v4 packet from tun rx data because of error: {e:?}")
         })?;
 
+        trace!("Success to parse ipv4 packet: {ipv4_packet:?}");
         let transport_protocol = ipv4_packet.next_header();
         match transport_protocol {
             IpProtocol::Tcp => {
@@ -337,7 +348,7 @@ impl PpaassVpnServer {
                 })?;
 
                 debug!(
-                    ">>>> Receive tcp packet from tun:\n{}\n",
+                    ">>>> Receive tcp packet from device:\n{}\n",
                     print_packet(&ipv4_packet)
                 );
 
@@ -358,8 +369,8 @@ impl PpaassVpnServer {
                         tcp_connection_id.dst_port,
                     );
                     let mut virtual_tcp_socket = VirtualTcpSocket::new(
-                        SocketBuffer::new(vec![0; 6553500]),
-                        SocketBuffer::new(vec![0; 6553500]),
+                        SocketBuffer::new(vec![0; 65535]),
+                        SocketBuffer::new(vec![0; 65535]),
                     );
                     if let Err(e) = virtual_tcp_socket.listen::<SocketAddr>(virtual_socket_listen_addr) {
                         error!(">>>> Tcp connection [{tcp_connection_id}] fail to listen vpn tcp socket because of error: {e:?}");
